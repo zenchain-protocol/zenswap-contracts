@@ -19,12 +19,12 @@ async function main() {
   const factoryAddress = await factory.getAddress();
   console.log(`Factory deployed to ${factoryAddress}`);
 
-  const USDT = await ethers.getContractFactory("Tether", owner);
+  const USDT = await ethers.getContractFactory("MockUSDT", owner);
   const usdt = await (await USDT.deploy()).waitForDeployment();
   const usdtAddress = await usdt.getAddress();
   console.log(`USDT deployed to ${usdtAddress}`);
 
-  const USDC = await ethers.getContractFactory("UsdCoin", owner);
+  const USDC = await ethers.getContractFactory("MockUSDC", owner);
   const usdc = await (await USDC.deploy()).waitForDeployment();
   const usdcAddress = await usdc.getAddress();
   console.log(`USDC deployed to ${usdcAddress}`);
