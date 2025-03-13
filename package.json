@@ -7,9 +7,14 @@
     "clean": "npx hardhat clean",
     "build": "npx hardhat compile",
     "node": "npx hardhat node",
-    "deploy": "npx hardhat run scripts/dev.ts --network localhost ---show-stack-traces",
-    "dev": "concurrently \"npm run node\" \"wait-on http://localhost:8545 && npm run deploy\"",
+    "deploy:localhost": "npx hardhat run scripts/deploy.ts --network localhost ---show-stack-traces",
+    "deploy:testnet": "npx hardhat run scripts/deploy.ts --network zenchainTestnet ---show-stack-traces",
+    "dev": "concurrently \"npm run node\" \"wait-on http://localhost:8545 && npm run deploy:localhost\"",
     "reset": "npm run clean && npm run dev"
+  },
+  "deployments": {
+    "zenchainTestnet": {},
+    "zenchainMainnet": {}
   },
   "keywords": [],
   "author": "",
