@@ -1,11 +1,10 @@
 import fs from "fs";
 import path from "path";
-import { ethers, network } from "hardhat";
+import hre, { network } from "hardhat";
 import WETH9 from "../WETH9.json";
 import factoryArtifact from "@uniswap/v2-core/build/UniswapV2Factory.json";
 import routerArtifact from "@uniswap/v2-periphery/build/UniswapV2Router02.json";
-import pairArtifact from "@uniswap/v2-periphery/build/IUniswapV2Pair.json";
-import { Contract, ContractFactory } from "ethers";
+import { parseEther, parseUnits } from "viem";
 
 type DeployedContracts = {
   factory: string;
@@ -32,10 +31,12 @@ async function updatePackageJson(networkName: string, deployments: DeployedContr
 }
 
 async function main() {
-  const [owner] = await ethers.getSigners();
+  const [walletClient] = await hre.viem.getWalletClients();
+  const publicClient = await hre.viem.getPublicClient();
+  const owner = walletClient.account.address;
   const networkName = network.name;
   console.log(
-    `Deploying to network: ${networkName} with account: ${owner.address}`
+    `Deploying to network: ${networkName} with account: ${owner}`
   );
 
   let deployedContracts: DeployedContracts = {
@@ -44,109 +45,111 @@ async function main() {
     router: ""
   };
 
-  const Factory = new ContractFactory(
-    factoryArtifact.abi,
-    factoryArtifact.bytecode,
-    owner
-  );
-
-  const factory = await (
-    await Factory.deploy(owner.address)
-  ).waitForDeployment();
-  const factoryAddress = await factory.getAddress();
+  console.log("Deploying UniswapV2Factory...");
+  const factoryHash = await walletClient.deployContract({
+    abi: factoryArtifact.abi,
+    bytecode: factoryArtifact.bytecode as `0x${string}`,
+    args: [owner],
+  });
+  const factoryAddress = await publicClient.waitForTransactionReceipt({ hash: factoryHash }).then(r => r.contractAddress!);
   console.log(`Factory deployed to ${factoryAddress}`);
   deployedContracts.factory = factoryAddress;
 
-  const USDT = await ethers.getContractFactory("MockUSDT", owner);
-  const usdt = await (await USDT.deploy()).waitForDeployment();
-  const usdtAddress = await usdt.getAddress();
-  console.log(`USDT deployed to ${usdtAddress}`);
-  deployedContracts.usdt = usdtAddress;
+  const usdt = await hre.viem.deployContract("MockUSDT", [
+    owner
+  ]);
+  console.log(`USDT deployed to ${usdt.address}`);
+  deployedContracts.usdt = usdt.address;
 
-  const USDC = await ethers.getContractFactory("MockUSDC", owner);
-  const usdc = await (await USDC.deploy()).waitForDeployment();
-  const usdcAddress = await usdc.getAddress();
-  console.log(`USDC deployed to ${usdcAddress}`);
-  deployedContracts.usdc = usdcAddress;
+  const usdc = await hre.viem.deployContract("MockUSDC", [
+    owner
+  ]);
+  console.log(`USDC deployed to ${usdc.address}`);
+  deployedContracts.usdc = usdc.address;
 
-  await usdt.connect(owner).mint(owner.address, ethers.parseEther("1000"));
-  await usdc.connect(owner).mint(owner.address, ethers.parseEther("1000"));
-
-  const factoryInstance = await ethers.getContractAt(
-    "UniswapV2Factory",
-    factoryAddress
-  );
-  const tx1 = await factoryInstance.createPair(usdtAddress, usdcAddress);
-  await tx1.wait();
-  const pairAddress = await factoryInstance.getPair(usdtAddress, usdcAddress);
-  console.log(`USDT-USDC pair deployed to ${pairAddress}`);
-  deployedContracts.usdtUsdcPair = pairAddress;
-
-  const pair = new Contract(pairAddress, pairArtifact.abi, owner);
-  let reserves = await pair.getReserves();
-  console.log(`Reserves: ${reserves[0].toString()}, ${reserves[1].toString()}`);
-
-  const WETH = new ContractFactory(WETH9.abi, WETH9.bytecode, owner);
-  const weth = await WETH.deploy();
-  const wethAddress = await weth.getAddress();
-  console.log(`WETH deployed to ${wethAddress}`);
+  console.log("Deploying WETH...");
+  const wethHash = await walletClient.deployContract({
+    abi: WETH9.abi,
+    bytecode: WETH9.bytecode as `0x${string}`,
+  });
+  const wethAddress = await publicClient.waitForTransactionReceipt({ hash: wethHash }).then(r => r.contractAddress!);
+  console.log(`WETH deployed at: ${wethAddress}`);
   deployedContracts.weth = wethAddress;
 
-  const Router = new ContractFactory(
-    routerArtifact.abi,
-    routerArtifact.bytecode,
-    owner
-  );
-  const router = await (
-    await Router.deploy(factoryAddress, wethAddress)
-  ).waitForDeployment();
-  const routerAddress = await router.getAddress();
-  console.log(`Router deployed to ${routerAddress}`);
+  console.log("Deploying UniswapV2Router02...");
+  const routerHash = await walletClient.deployContract({
+    abi: routerArtifact.abi,
+    bytecode: routerArtifact.bytecode as `0x${string}`,
+    args: [factoryAddress, wethAddress],
+  });
+  const routerAddress = await publicClient.waitForTransactionReceipt({ hash: routerHash }).then(r => r.contractAddress!);
+  console.log(`Router deployed at: ${routerAddress}`);
   deployedContracts.router = routerAddress;
 
-  const MaxUint256 =
-    "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+  console.log("Minting 1000 USDT and 1000 USDC...");
+  await walletClient.writeContract({
+    address: usdt.address,
+    abi: usdt.abi,
+    functionName: "mint",
+    args: [owner, parseUnits("1000", 6)],
+  });
+  await walletClient.writeContract({
+    address: usdc.address,
+    abi: usdc.abi,
+    functionName: "mint",
+    args: [owner, parseUnits("1000", 6)],
+  });
+  console.log("Minting successful!");
 
-  await usdt.approve(routerAddress, MaxUint256);
-  await usdc.approve(routerAddress, MaxUint256);
+  console.log("Creating USDT-USDC Pair...");
+  const createPairHash = await walletClient.writeContract({
+    address: factoryAddress,
+    abi: factoryArtifact.abi,
+    functionName: "createPair",
+    args: [usdt.address, usdc.address],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: createPairHash });
+  const pairAddress = await publicClient.readContract({
+    address: factoryAddress,
+    abi: factoryArtifact.abi,
+    functionName: "getPair",
+    args: [usdt.address, usdc.address],
+  });
+  console.log(`USDT-USDC pair deployed at: ${pairAddress}`);
+  deployedContracts.usdtUsdcPair = pairAddress as string;
 
-  const token0Amount = ethers.parseUnits("100");
-  const token1Amount = ethers.parseUnits("100");
+  console.log("Approving Router for token transfers...");
+  await walletClient.writeContract({
+    address: usdt.address,
+    abi: usdt.abi,
+    functionName: "approve",
+    args: [routerAddress, parseEther("1000000")],
+  });
+  await walletClient.writeContract({
+    address: usdc.address,
+    abi: usdt.abi,
+    functionName: "approve",
+    args: [routerAddress, parseEther("1000000")],
+  });
 
-  const lpTokenBalanceBefore = await pair.balanceOf(owner.address);
-  console.log(
-    `LP tokens for the owner before: ${lpTokenBalanceBefore.toString()}`
-  );
-
+  console.log("Adding liquidity...");
   const deadline = Math.floor(Date.now() / 1000) + 10 * 60;
-  const routerInstance = await ethers.getContractAt(
-    "UniswapV2Router02",
-    routerAddress
-  );
-  await routerInstance.addLiquidity(
-    usdtAddress,
-    usdcAddress,
-    token0Amount,
-    token1Amount,
-    0,
-    0,
-    owner.address,
-    deadline
-  );
+  const addLiquidityHash = await walletClient.writeContract({
+    address: routerAddress,
+    abi: routerArtifact.abi,
+    functionName: "addLiquidity",
+    args: [usdt.address, usdc.address, parseUnits("100", 6), parseUnits("100", 6), 0, 0, owner, deadline],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: addLiquidityHash });
+  console.log("Liquidity added successfully.");
 
-  const lpTokenBalance = await pair.balanceOf(owner.address);
-  console.log(`LP tokens for the owner: ${lpTokenBalance.toString()}`);
+  if (networkName !== "localhost") {
+    await updatePackageJson(networkName, deployedContracts);
+  } else {
+    console.log("Skipping package.json update for localhost.");
+  }
 
-  reserves = await pair.getReserves();
-  console.log(`Reserves: ${reserves[0].toString()}, ${reserves[1].toString()}`);
-
-  console.log("USDT_ADDRESS", usdtAddress);
-  console.log("USDC_ADDRESS", usdcAddress);
-  console.log("WETH_ADDRESS", wethAddress);
-  console.log("FACTORY_ADDRESS", factoryAddress);
-  console.log("ROUTER_ADDRESS", routerAddress);
-  console.log("USDC_USDT_PAIR_ADDRESS", pairAddress);
-  await updatePackageJson(networkName, deployedContracts);
+  console.log("Deployment completed successfully!");
 }
 
 main()
