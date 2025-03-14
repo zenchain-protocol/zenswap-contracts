@@ -17,7 +17,10 @@ type DeployedContracts = {
 
 const PACKAGE_JSON_PATH = path.join(__dirname, "../package.json");
 
-async function updatePackageJson(networkName: string, deployments: DeployedContracts) {
+async function updatePackageJson(
+  networkName: string,
+  deployments: DeployedContracts
+) {
   const packageJson = JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf8"));
 
   if (!packageJson.deployments) {
@@ -35,14 +38,12 @@ async function main() {
   const publicClient = await hre.viem.getPublicClient();
   const owner = walletClient.account.address;
   const networkName = network.name;
-  console.log(
-    `Deploying to network: ${networkName} with account: ${owner}`
-  );
+  console.log(`Deploying to network: ${networkName} with account: ${owner}`);
 
   let deployedContracts: DeployedContracts = {
     factory: "",
     weth: "",
-    router: ""
+    router: "",
   };
 
   console.log("Deploying UniswapV2Factory...");
@@ -51,19 +52,17 @@ async function main() {
     bytecode: factoryArtifact.bytecode as `0x${string}`,
     args: [owner],
   });
-  const factoryAddress = await publicClient.waitForTransactionReceipt({ hash: factoryHash }).then(r => r.contractAddress!);
+  const factoryAddress = await publicClient
+    .waitForTransactionReceipt({ hash: factoryHash })
+    .then((r) => r.contractAddress!);
   console.log(`Factory deployed to ${factoryAddress}`);
   deployedContracts.factory = factoryAddress;
 
-  const usdt = await hre.viem.deployContract("MockUSDT", [
-    owner
-  ]);
+  const usdt = await hre.viem.deployContract("MockUSDT");
   console.log(`USDT deployed to ${usdt.address}`);
   deployedContracts.usdt = usdt.address;
 
-  const usdc = await hre.viem.deployContract("MockUSDC", [
-    owner
-  ]);
+  const usdc = await hre.viem.deployContract("MockUSDC");
   console.log(`USDC deployed to ${usdc.address}`);
   deployedContracts.usdc = usdc.address;
 
@@ -72,7 +71,9 @@ async function main() {
     abi: WETH9.abi,
     bytecode: WETH9.bytecode as `0x${string}`,
   });
-  const wethAddress = await publicClient.waitForTransactionReceipt({ hash: wethHash }).then(r => r.contractAddress!);
+  const wethAddress = await publicClient
+    .waitForTransactionReceipt({ hash: wethHash })
+    .then((r) => r.contractAddress!);
   console.log(`WETH deployed at: ${wethAddress}`);
   deployedContracts.weth = wethAddress;
 
@@ -82,7 +83,9 @@ async function main() {
     bytecode: routerArtifact.bytecode as `0x${string}`,
     args: [factoryAddress, wethAddress],
   });
-  const routerAddress = await publicClient.waitForTransactionReceipt({ hash: routerHash }).then(r => r.contractAddress!);
+  const routerAddress = await publicClient
+    .waitForTransactionReceipt({ hash: routerHash })
+    .then((r) => r.contractAddress!);
   console.log(`Router deployed at: ${routerAddress}`);
   deployedContracts.router = routerAddress;
 
@@ -138,7 +141,16 @@ async function main() {
     address: routerAddress,
     abi: routerArtifact.abi,
     functionName: "addLiquidity",
-    args: [usdt.address, usdc.address, parseUnits("100", 6), parseUnits("100", 6), 0, 0, owner, deadline],
+    args: [
+      usdt.address,
+      usdc.address,
+      parseUnits("100", 6),
+      parseUnits("100", 6),
+      0,
+      0,
+      owner,
+      deadline,
+    ],
   });
   await publicClient.waitForTransactionReceipt({ hash: addLiquidityHash });
   console.log("Liquidity added successfully.");
