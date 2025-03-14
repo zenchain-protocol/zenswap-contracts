@@ -7,7 +7,7 @@ const config: HardhatUserConfig = {
   solidity: {
     compilers: [
       {
-        version: "0.8.28", // Mock Contracts
+        version: "0.8.27", // Mock Token Contracts
         settings: {
           optimizer: { enabled: true, runs: 1000000 },
           evmVersion: `shanghai`,
