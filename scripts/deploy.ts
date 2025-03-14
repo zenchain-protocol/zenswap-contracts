@@ -4,7 +4,7 @@ import hre, { network } from "hardhat";
 import WETH9 from "../WETH9.json";
 import factoryArtifact from "@uniswap/v2-core/build/UniswapV2Factory.json";
 import routerArtifact from "@uniswap/v2-periphery/build/UniswapV2Router02.json";
-import { keccak256, parseEther, parseSignature, parseUnits, toHex } from "viem";
+import { formatUnits, parseSignature, parseUnits } from "viem";
 import {
   PublicClient,
   WalletClient,
@@ -127,14 +127,16 @@ async function main() {
   console.log(`Factory deployed to ${factoryAddress}`);
   deployedContracts.factory = factoryAddress;
 
-  const ETH = await hre.viem.deployContract("MockToken", ["Ether", "ETH", 18]);
+  const ETHdecimals = 18;
+  const ETH = await hre.viem.deployContract("MockToken", ["Ether", "ETH", ETHdecimals]);
   console.log(`ETH deployed to ${ETH.address}`);
   deployedContracts.ETH = ETH.address;
 
+  const USDCdecimals = 6;
   const USDC = await hre.viem.deployContract("MockToken", [
     "USD Coin",
     "USDC",
-    6,
+    USDCdecimals,
   ]);
   console.log(`USDC deployed to ${USDC.address}`);
   deployedContracts.USDC = USDC.address;
@@ -167,13 +169,13 @@ async function main() {
     address: ETH.address,
     abi: ETH.abi,
     functionName: "mint",
-    args: [owner, parseUnits("1000", 6)],
+    args: [owner, parseUnits("1000", ETHdecimals)],
   });
   await walletClient.writeContract({
     address: USDC.address,
     abi: USDC.abi,
     functionName: "mint",
-    args: [owner, parseUnits("1000", 6)],
+    args: [owner, parseUnits("1000", USDCdecimals)],
   });
   console.log("Minting successful!");
 
@@ -203,7 +205,7 @@ async function main() {
     routerAddress,
     "Ether",
     ETH.abi,
-    parseEther("1000000")
+    parseUnits("1000", ETHdecimals)
   );
   await permitToken(
     walletClient,
@@ -213,7 +215,7 @@ async function main() {
     routerAddress,
     "USD Coin",
     USDC.abi,
-    parseEther("1000000")
+    parseUnits("1000", USDCdecimals)
   );
 
   const allowanceETH = await publicClient.readContract({
@@ -228,8 +230,8 @@ async function main() {
     functionName: "allowance",
     args: [owner, routerAddress],
   });
-  console.log("ETH Allowance -> Router:", allowanceETH.toString());
-  console.log("USDC Allowance -> Router:", allowanceUSDC.toString());
+  console.log("ETH Allowance -> Router:", formatUnits(allowanceETH, ETHdecimals));
+  console.log("USDC Allowance -> Router:", formatUnits(allowanceUSDC, USDCdecimals));
 
   const balanceETH = await publicClient.readContract({
     address: ETH.address,
@@ -243,8 +245,8 @@ async function main() {
     functionName: "balanceOf",
     args: [owner],
   });
-  console.log("ETH Balance:", balanceETH.toString());
-  console.log("USDC Balance:", balanceUSDC.toString());
+  console.log("ETH Balance:", formatUnits(balanceETH, ETHdecimals));
+  console.log("USDC Balance:", formatUnits(balanceUSDC, USDCdecimals));
 
   console.log("Adding liquidity...");
   const deadline = Math.floor(Date.now() / 1000) + 10 * 60;
