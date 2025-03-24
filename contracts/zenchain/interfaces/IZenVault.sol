@@ -6,13 +6,19 @@ interface IZenVault is IUniswapV2Pair {
 
     // TODO: add events
 
+    function stake(uint256 _amount) external;
+
+    function unstake(uint256 _amount) external;
+
+    function withdrawUnlocked() external;
+
     function updateStakingLock(uint32 era) external;
 
-    function unlockAllStake(uint32 era) external;
+    function unlockAllStake() external;
 
     function doSlash(uint256 slash_amount) external;
 
-    function totalStake() external returns (uint256);
+    function enableStaking() external;
 
-    function totalStakeAtEra(uint32 era) external returns (uint256);
+    function disableStaking() external;
 }
