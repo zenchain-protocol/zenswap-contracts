@@ -1,8 +1,8 @@
 pragma solidity ^0.8.0;
 import "@uniswap/v2-core/contracts/UniswapV2Pair.sol";
-import "./interfaces/IVault.sol";
+import "./interfaces/IZenVault.sol";
 
-contract ZenVault is IVault, UniswapV2Pair {
+contract ZenVault is IZenVault, UniswapV2Pair {
 
     function updateStakingLock(uint32 era) external {
 
@@ -23,5 +23,4 @@ contract ZenVault is IVault, UniswapV2Pair {
     function totalStakeAtEra(uint32 era) external returns (uint256) {
         return 0;
     }
-
 }

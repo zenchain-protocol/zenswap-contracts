@@ -1,6 +1,8 @@
 pragma solidity ^0.8.0;
 
-interface IVault {
+import '@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol';
+
+interface IZenVault is IUniswapV2Pair {
 
     // TODO: add events
 
