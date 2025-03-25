@@ -77,15 +77,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
 
     /**
-     * @dev Unstake tokens. Users can withdraw their staked tokens when they become fully unlocked.
-     * @param _amount The amount of tokens to unstake.
-     */
-    function unstake(uint256 amount) external nonReentrant {
-        _unstake(msg.sender, amount);
-    }
-
-    /**
-     * @notice Internal function to handle the unstaking process for a user
+     * @notice Unstake tokens.
      * @dev This function:
      *      1. Reduces the user's staked balance
      *      2. Reduces the total stake in the ZenVault
@@ -103,21 +95,21 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
      * @custom:security non-reentrant - Protected by the nonReentrant modifier on the public unstake function
      * @custom:security-note This function moves tokens to an unlocking state rather than transferring them immediately
      */
-    function _unstake(address user, uint256 _amount) internal {
-        require(_amount > 0, "Amount must be greater than zero.");
-        require(stakedBalances[user] >= _amount, "Insufficient staked balance.");
+    function unstake(uint256 amount) external nonReentrant {
+        require(amount > 0, "Amount must be greater than zero.");
+        require(stakedBalances[msg.sender] >= amount, "Insufficient staked balance.");
 
         // Update the user's staked balance.
-        stakedBalances[user] = stakedBalances[user].sub(_amount);
-        totalStake = totalStake.sub(_amount);
+        stakedBalances[msg.sender] = stakedBalances[msg.sender].sub(amount);
+        totalStake = totalStake.sub(amount);
 
         // Transfer the staking tokens from stakedBalances to unlocking
         uint32 memory currentEra = VAULT_STAKING_CONTRACT.currentEra();
         uint32 memory bondingDuration = VAULT_STAKING_CONTRACT.bondingDuration();
-        UnlockChunk memory chunk = UnlockChunk(_amount, currentEra + bondingDuration);
-        unlocking[user] = unlocking[user].push(chunk);
+        UnlockChunk memory chunk = UnlockChunk(amount, currentEra + bondingDuration);
+        unlocking[msg.sender] = unlocking[msg.sender].push(chunk);
 
-        emit Unstaked(user, _amount);
+        emit Unstaked(msg.sender, amount);
     }
 
     // transfer caller's unlocked tokens to caller
@@ -154,8 +146,8 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
     // Record the stake amount used for the current era
     function recordEraStake(uint32 era) external {
-        require(era > lastEraUpdate, "Era exposures have already been recorded for the given era.");
-        require(eraExposures[era].length == 0, "Era exposures have already been recorded for the given era.");
+        require(era >= lastEraUpdate, "Era exposures have been finalized for the given era.");
+        delete eraExposures[era];
 
         // set total stake
         totalStakeAtEra[era] = totalStake;
@@ -178,7 +170,8 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
         // Resize the array to remove users who are no longer staking
         stakers.length = writeIndex;
-        lastEraUpdate = lastEraUpdate + 1;
+        lastEraUpdate = era;
+        // TODO: emit event
     }
 
     // Distribute vault slash among users in proportion to their share of the total exposure in the slash era
@@ -190,6 +183,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
             uint256 user_slash = exposure.value.mul(slash_amount).div(_totalStakeAtEra);
             _applySlashToUser(user_slash, exposure.staker);
         }
+        // TODO: emit event
     }
 
     // Apply slash to individual user
