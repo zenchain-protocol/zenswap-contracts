@@ -1,32 +1,17 @@
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 import "@uniswap/v2-core/contracts/UniswapV2Pair.sol";
 import "./interfaces/IZenVault.sol";
 
 import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "./Ownable.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/vault-staking/IVaultStaking.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
 
 // TODO: handle reward distribution
 
-contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
+contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     using SafeMath for uint256;
-
-    event StakingEnabled(uint32 era);
-    event Staked(address indexed user, uint256 amount);
-    event Unstaked(address indexed user, uint256 amount);
-    event Withdrawal(address indexed user, uint256 amount);
-    event EraExposureRecorded(uint32 indexed era, uint256 totalStake);
-    event VaultSlashed(uint32 indexed era, uint256 slash_amount);
-    event UserSlashed(address indexed user, uint32 indexed era, uint256 slash_amount);
-
-    // A chunk of tokens that were staked but are now in the process of unlocking
-    struct UnlockChunk {
-        // The amount of token that will become unlocked
-        uint256 value;
-        // The era when the chunk will be unlocked
-        uint32 era;
-    }
 
     // Mapping of user addresses to their unlocking balances.
     mapping(address => UnlockChunk[]) public unlocking;
@@ -36,14 +21,6 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
     // A list of stakers; roughly corresponds to keys of stakedBalances, but can be outdated.
     address[] private stakers;
-
-    // A user's staking exposure for the era
-    struct EraExposure {
-        // User address
-        address staker;
-        // The amount of token the user staked in the era
-        uint256 value;
-    }
 
     // Mapping of era index to total stake;
     mapping(uint32 => uint256) public totalStakeAtEra;
@@ -58,11 +35,31 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
     uint32 public lastEraUpdate;
 
     // If false, new staking is not permitted.
-    bool public isStakingEnabled = false;
+    bool public isStakingEnabled;
+
+    constructor(address token0, address token1)
+    UniswapV2Pair(token0, token1)
+    Ownable(address(0))
+    {}
 
     /**
-     * @dev Stake tokens.  Users transfer staking tokens to this contract, and their stake is recorded.
-     * @param _amount The amount of tokens to stake.
+     * @notice Stakes tokens in the ZenVault
+     * @dev Allows users to stake tokens in the ZenVault contract. This function:
+     *      1. Transfers staking tokens from the user to this contract
+     *      2. Records the user's staked balance
+     *      3. Adds the user to the stakers array if this is their first stake
+     *      4. Updates the total stake in the ZenVault
+     *
+     * @param amount The amount of tokens to stake (must be > 0)
+     *
+     * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
+     * @custom:throws "Staking is not currently permitted in this ZenVault." - If staking is disabled
+     * @custom:throws Various errors may be thrown by the transferFrom function
+     *
+     * @custom:emits Staked - When tokens are successfully staked, with the staker's address and amount
+     *
+     * @custom:security non-reentrant - Protected against reentrancy attacks
+     * @custom:security-note Requires approval of tokens to this contract before staking
      */
     function stake(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than zero.");
@@ -116,8 +113,29 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         emit Unstaked(msg.sender, amount);
     }
 
-    // transfer caller's unlocked tokens to caller
-    function withdrawUnlocked() external {
+    /**
+     * @notice Withdraws all unlocked tokens to the caller's address
+     * @dev This function:
+     *      1. Retrieves the current era from the STAKING_CONTRACT
+     *      2. Processes all unlock chunks for the caller
+     *      3. Transfers any unlocked tokens to the caller
+     *      4. Removes processed chunks from storage while preserving locked chunks
+     *      5. Uses an optimized in-place array filtering technique to minimize gas costs
+     *
+     * Tokens are considered unlocked when the current era is greater than or equal to
+     * the era specified in the unlock chunk.
+     *
+     * If no tokens are eligible for withdrawal, the function completes without transferring
+     * any tokens but still emits an event with a zero amount.
+     *
+     * @custom:emits Withdrawal - When the function completes, with the caller's address and
+     *                            the total amount withdrawn (may be zero)
+     *
+     * @custom:security-note No reentrancy protection is applied, as the state is fully updated
+     *                       before any external calls
+     * @custom:gas-optimization Uses in-place array filtering to avoid creating new arrays
+     */
+    function withdrawUnlocked() external nonReentrant {
         uint32 memory currentEra = STAKING_CONTRACT.currentEra();
         UnlockChunk[] storage chunks = unlocking[msg.sender];
         uint256 writeIndex = 0;
@@ -149,8 +167,26 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         emit Withdrawal(msg.sender, totalToTransfer);
     }
 
-    // Record the stake amount used for the current era
-    function recordEraStake(uint32 era) external {
+    /**
+     * @notice Records the total stake and individual staker exposures for a specific era
+     * @dev Updates the stake record for an era, capturing the current state of all active stakers.
+     *      This function performs the following operations:
+     *      1. Validates that the era is not already finalized
+     *      2. Records the total stake amount for the specified era
+     *      3. Updates the list of staker exposures for the era, capturing each staker's balance
+     *      4. Cleans up the stakers array by removing users with zero balance
+     *      5. Updates the lastEraUpdate value to mark this era as processed
+     *
+     * @param era The era number to record stake information for (must be >= lastEraUpdate)
+     *
+     * @custom:throws "Era exposures have been finalized for the given era." - If trying to update an era that's already finalized
+     *
+     * @custom:emits EraExposureRecorded - When era stake is successfully recorded, with era number and total stake amount
+     *
+     * @custom:security non-reentrant - Protected against reentrancy attacks
+     * @custom:security-note This function manages critical staker exposure data used for reward calculations
+     */
+    function recordEraStake(uint32 era) external nonReentrant {
         require(era >= lastEraUpdate, "Era exposures have been finalized for the given era.");
         delete eraExposures[era];
 
@@ -180,8 +216,28 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         emit EraExposureRecorded(era, totalStake);
     }
 
-    // Distribute vault slash among users in proportion to their share of the total exposure in the slash era
-    function doSlash(uint256 slash_amount, uint32 era) external {
+    /**
+     * @notice Applies a slashing penalty to stakers proportional to their stake in a specific era
+     * @dev This function implements the vault slashing mechanism where penalties are distributed
+     *      proportionally among all stakers based on their exposure in the specified era.
+     *      The function:
+     *      1. Retrieves total stake amount for the specified era
+     *      2. Iterates through all staker exposures for that era
+     *      3. Calculates each user's slash amount proportionally to their stake
+     *      4. Applies the slash to each user via the internal _applySlashToUser function
+     *      5. Emits a VaultSlashed event when complete
+     *
+     * @param slash_amount The total amount to be slashed from the vault
+     * @param era The era identifier for which the slash should be applied
+     *
+     * @custom:security onlyOwner - Can only be called by the contract owner
+     * @custom:emits VaultSlashed - When the slashing process is complete, with the era and amount
+     *
+     * @notice The slashing is implemented using the formula:
+     *         user_slash = (user_stake / total_stake) * slash_amount
+     *         This ensures proportional distribution of the penalty among all stakers
+     */
+    function doSlash(uint256 slash_amount, uint32 era) external onlyOwner {
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         EraExposure[] memory exposures = eraExposures[era];
         for (uint256 i = 0; i < exposures.length; i++) {
@@ -193,7 +249,22 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         emit VaultSlashed(era, era, slash_amount);
     }
 
-    // Apply slash to individual user
+    /**
+     * @notice Applies a slashing penalty to a specific user
+     * @dev Implements the slashing logic for an individual user by reducing their staked balance
+     *      and/or unlocking chunks when needed. The function handles two cases:
+     *      1. If the user's staked balance covers the slash amount, it simply deducts from there
+     *      2. If the staked balance is insufficient, it first depletes the staked balance,
+     *         then continues slashing from unlocking chunks in reverse order (newest first)
+     *
+     * @param slash_amount The amount to be slashed from the user
+     * @param era The era identifier for which the slash is occurring
+     * @param user The address of the user to apply the slash to
+     *
+     * @custom:emits UserSlashed - When the slashing process is complete for this user
+     *
+     * @custom:security internal - Only callable from within the contract
+     */
     function _applySlashToUser(uint256 slash_amount, uint32 era, address user) internal {
         // Case 1: We can slash directly from user balance
         if (stakedBalances[user] >= slash_amount) {
@@ -216,16 +287,27 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
                     chunk.value = 0;
                 }
             }
-            // TODO: remaining slash should never be positive here, but should I check if it is and handle it somehow?
+            // TODO: remaining slash should never be positive here. It should not be possible. But should I check if it is positive and handle it somehow?
         }
 
         emit UserSlashed(user, era, slash_amount);
     }
 
     /**
-     * @dev Enable or disable staking in the ZenVault. This function can be used to pause or resume staking.
+     * @notice Controls whether staking is enabled in the ZenVault
+     * @dev Allows the contract owner to toggle the staking functionality on or off.
+     *      When disabled, new stake() calls will be rejected.
+     *      This function is restricted to the contract owner via the onlyOwner modifier.
+     *      The state change is stored in the public isStakingEnabled boolean variable.
+     *
+     * @param isEnabled True to enable staking, false to disable it
+     *
+     * @custom:emits No events are emitted
+     * @custom:security Only callable by the contract owner
+     * @custom:usage This function is primarily used for emergency situations or
+     *               maintenance periods where staking needs to be temporarily paused
      */
-    function setIsStakingEnabled(bool isEnabled) external {
+    function setIsStakingEnabled(bool isEnabled) external onlyOwner {
         isStakingEnabled = isEnabled;
     }
 }
