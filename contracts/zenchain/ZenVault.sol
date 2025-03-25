@@ -9,6 +9,7 @@ import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompile
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
 
 // TODO: handle reward distribution
+// TODO: UniswapV2Pair is a UniswapV2ERC20, not a ZenSwapERC20. Need to fix inheritance. Should we even use ZenSwapERC20 if its only purpose is to change the token name/symbol?
 
 contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     using SafeMath for uint256;
