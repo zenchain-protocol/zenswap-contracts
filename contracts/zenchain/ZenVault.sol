@@ -9,6 +9,8 @@ import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompile
 contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
     using SafeMath for uint256;
 
+    event StakingEnabled(uint32 era);
+
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
 
@@ -32,41 +34,69 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
     // The total amount staked
     uint256 public totalStake;
 
+    // If false, new staking is not permitted.
+    bool public isStakingEnabled = false;
+
     /**
      * @dev Stake tokens.  Users transfer staking tokens to this contract, and their stake is recorded.
      * @param _amount The amount of tokens to stake.
      */
-    function stake(uint256 _amount) external nonReentrant {
-        require(_amount > 0, "Amount must be greater than zero.");
+    function stake(uint256 amount) external nonReentrant {
+        require(amount > 0, "Amount must be greater than zero.");
+        require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
         // Transfer the staking tokens from the user to this contract.
-        this.transferFrom(msg.sender, address(this), _amount);
+        this.transferFrom(msg.sender, address(this), amount);
 
         // Update the user's staked balance.
-        stakedBalances[msg.sender] = stakedBalances[msg.sender].add(_amount);
-        totalStake = totalStake.add(_amount);
+        stakedBalances[msg.sender] = stakedBalances[msg.sender].add(amount);
+        totalStake = totalStake.add(amount);
 
-        emit Staked(msg.sender, _amount);
+        emit Staked(msg.sender, amount);
     }
+
 
     /**
      * @dev Unstake tokens. Users can withdraw their staked tokens when they become fully unlocked.
      * @param _amount The amount of tokens to unstake.
      */
-    function unstake(uint256 _amount) external nonReentrant {
+    function unstake(uint256 amount) external nonReentrant {
+        _unstake(msg.sender, amount);
+    }
+
+    /**
+     * @notice Internal function to handle the unstaking process for a user
+     * @dev This function:
+     *      1. Reduces the user's staked balance
+     *      2. Reduces the total stake in the ZenVault
+     *      3. Creates an unlock chunk that will become available after the bonding period
+     *      4. Does not immediately return tokens to the user - they must call withdrawUnlocked() after the bonding period
+     *
+     * @param user Address of the user who is unstaking tokens
+     * @param _amount Amount of tokens to unstake (must be > 0 and <= user's staked balance)
+     *
+     * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
+     * @custom:throws "Insufficient staked balance." - If the user's staked balance is less than the requested amount
+     *
+     * @custom:emits Unstaked - When tokens are successfully unstaked
+     *
+     * @custom:security non-reentrant - Protected by the nonReentrant modifier on the public unstake function
+     * @custom:security-note This function moves tokens to an unlocking state rather than transferring them immediately
+     */
+    function _unstake(address user, uint256 _amount) internal {
         require(_amount > 0, "Amount must be greater than zero.");
-        require(stakedBalances[msg.sender] >= _amount, "Insufficient staked balance.");
+        require(stakedBalances[user] >= _amount, "Insufficient staked balance.");
 
         // Update the user's staked balance.
-        stakedBalances[msg.sender] = stakedBalances[msg.sender].sub(_amount);
+        stakedBalances[user] = stakedBalances[user].sub(_amount);
         totalStake = totalStake.sub(_amount);
 
         // Transfer the staking tokens from stakedBalances to unlocking
         uint32 memory currentEra = VAULT_STAKING_CONTRACT.currentEra();
         uint32 memory bondingDuration = VAULT_STAKING_CONTRACT.bondingDuration();
         UnlockChunk memory chunk = UnlockChunk(_amount, currentEra + bondingDuration);
-        unlocking[msg.sender] = unlocking[msg.sender].push(chunk);
+        unlocking[user] = unlocking[user].push(chunk);
 
-        emit Unstaked(msg.sender, _amount);
+        emit Unstaked(user, _amount);
     }
 
     // transfer caller's unlocked tokens to caller
@@ -101,27 +131,20 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         // TODO: emit event
     }
 
-    // Update the staking lock so that
-    function updateStakingLock(uint32 era) external {
-        // TODO
-    }
-
-    function enableStaking() external {
-        // TODO
-    }
-
-    // disable staking, so that
-    function disableStaking() external {
-        // TODO
-    }
-
-    // unlock all stake and disable staking so that no new stake can be added
-    function unlockAllStake() internal {
+    // Record the stake amount used for the current era
+    function recordEraStake(uint32 era) external {
         // TODO
     }
 
     // apply slash amount to stake balance and also to unlocking balances that are within bonding_duration
-    function doSlash(uint256 slash_amount) external {
+    function doSlash(uint256 slash_amount, uint32 era) external {
         // TODO
+    }
+
+    /**
+     * @dev Enable or disable staking in the ZenVault. This function can be used to pause or resume staking.
+     */
+    function setIsStakingEnabled(bool isEnabled) external {
+        isStakingEnabled = isEnabled;
     }
 }

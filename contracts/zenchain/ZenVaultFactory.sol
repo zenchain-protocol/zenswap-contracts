@@ -33,7 +33,6 @@ contract ZenVaultFactory is IUniswapV2Factory {
             pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
         }
         IZenVault(pair).initialize(token0, token1);
-        VAULT_STAKING_CONTRACT.registerVault(pair);
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair; // populate mapping in the reverse direction
         allPairs.push(pair);
