@@ -6,11 +6,12 @@ import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/vault-staking/IVaultStaking.sol";
 
+// TODO: handle reward distribution
+
 contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
     using SafeMath for uint256;
 
     event StakingEnabled(uint32 era);
-
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
 
@@ -28,11 +29,28 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
     // Mapping of user addresses to their staked amounts.
     mapping(address => uint256) public stakedBalances;
 
+    // A list of stakers; roughly corresponds to keys of stakedBalances, but can be outdated.
+    address[] private stakers;
+
+    // A user's staking exposure for the era
+    struct EraExposure {
+        // User address
+        address staker;
+        // The amount of token the user staked in the era
+        uint256 value;
+    }
+
     // Mapping of era index to total stake;
     mapping(uint32 => uint256) public totalStakeAtEra;
 
+    // Mapping of era index to list of staker exposures;
+    mapping(uint32 => EraExposure[]) public eraExposures;
+
     // The total amount staked
     uint256 public totalStake;
+
+    // The last era in which this vault was updated
+    uint32 public lastEraUpdate;
 
     // If false, new staking is not permitted.
     bool public isStakingEnabled = false;
@@ -48,6 +66,9 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         this.transferFrom(msg.sender, address(this), amount);
 
         // Update the user's staked balance.
+        if (stakedBalances[msg.sender] == 0) {
+            stakers.push(msg.sender);
+        }
         stakedBalances[msg.sender] = stakedBalances[msg.sender].add(amount);
         totalStake = totalStake.add(amount);
 
@@ -133,12 +154,70 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
     // Record the stake amount used for the current era
     function recordEraStake(uint32 era) external {
-        // TODO
+        require(era > lastEraUpdate, "Era exposures have already been recorded for the given era.");
+        require(eraExposures[era].length == 0, "Era exposures have already been recorded for the given era.");
+
+        // set total stake
+        totalStakeAtEra[era] = totalStake;
+
+        // Update era exposures
+        uint256 writeIndex = 0;
+        for (uint256 i = 0; i < stakers.length; i++) {
+            address staker = stakers[i];
+            if (stakedBalances[staker] > 0) {
+                // Add user to record their share of the era exposure
+                EraExposure memory exposure = EraExposure(staker, stakedBalances[staker]);
+                eraExposures[era].push(exposure);
+                // User is still staking
+                if (writeIndex != i) {
+                    stakers[writeIndex] = staker;
+                }
+                writeIndex++;
+            }
+        }
+
+        // Resize the array to remove users who are no longer staking
+        stakers.length = writeIndex;
+        lastEraUpdate = lastEraUpdate + 1;
     }
 
-    // apply slash amount to stake balance and also to unlocking balances that are within bonding_duration
+    // Distribute vault slash among users in proportion to their share of the total exposure in the slash era
     function doSlash(uint256 slash_amount, uint32 era) external {
-        // TODO
+        uint256 _totalStakeAtEra = totalStakeAtEra[era];
+        EraExposure[] memory exposures = eraExposures[era];
+        for (uint256 i = 0; i < exposures.length; i++) {
+            EraExposure memory exposure = exposures[i];
+            uint256 user_slash = exposure.value.mul(slash_amount).div(_totalStakeAtEra);
+            _applySlashToUser(user_slash, exposure.staker);
+        }
+    }
+
+    // Apply slash to individual user
+    function _applySlashToUser(uint256 slash_amount, address user) internal {
+        // Case 1: We can slash directly from user balance
+        if (stakedBalances[user] >= slash_amount) {
+            stakedBalances[user] = stakedBalances[user] - slash_amount;
+        // Case 2: User's balance is in the process of unlocking
+        } else {
+            // slash from stake balance first
+            uint256 remaining_slash = slash_amount - stakedBalances[user];
+            stakedBalances[user] = 0;
+            // slash from unlocking chunks
+            UnlockChunk[] storage chunks = unlocking[user];
+            for (uint256 i = chunks.length - 1; i >= 0; i--) {
+                UnlockChunk chunk = chunks[i];
+                if (chunk.value >= remaining_slash) {
+                    chunk.value = chunk.value - remaining_slash;
+                    remaining_slash = 0;
+                    break;
+                } else {
+                    remaining_slash = remaining_slash - chunk.value;
+                    chunk.value = 0;
+                }
+            }
+            // TODO: remaining slash should never be positive here, but should I check if it is and handle it somehow?
+        }
+        // TODO: emit event
     }
 
     /**
