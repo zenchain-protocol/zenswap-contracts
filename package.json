@@ -13,7 +13,14 @@
     "reset": "npm run clean && npm run dev"
   },
   "deployments": {
-    "zenchainTestnet": {},
+    "zenchainTestnet": {
+      "factory": "0x6316f1f695aab22e386ddd7e7c0c3415011cc6f8",
+      "weth": "0x70e22f8ccfd7ecbcc36c072f39dd61e2cd8296bf",
+      "router": "0x5812a9b84c1ec9e4d65de798196e6d06707fb70d",
+      "ETH": "0x926e4b132d525537a339b65006d9895b3ad212f8",
+      "USDC": "0x72545c4c05161f0e11447144abdeb01d66490bb1",
+      "ETHUSDCPair": "0x57CA670Fd913536DEC0524978059E6663796bce3"
+    },
     "zenchainMainnet": {}
   },
   "keywords": [],

@@ -100,18 +100,20 @@ async function main() {
   deployedContracts.router = routerAddress;
 
   console.log("Minting 1000 ETH and 1000 USDC...");
-  await walletClient.writeContract({
+  const mintETHhash = await walletClient.writeContract({
     address: ETH.address,
     abi: ETH.abi,
     functionName: "mint",
     args: [owner, parseUnits("1000", ETHdecimals)],
   });
-  await walletClient.writeContract({
+  await publicClient.waitForTransactionReceipt({ hash: mintETHhash });
+  const mintUSDChash = await walletClient.writeContract({
     address: USDC.address,
     abi: USDC.abi,
     functionName: "mint",
     args: [owner, parseUnits("1000", USDCdecimals)],
   });
+  await publicClient.waitForTransactionReceipt({ hash: mintUSDChash });
   console.log("Minting successful!");
 
   console.log("Creating ETH-USDC Pair...");
