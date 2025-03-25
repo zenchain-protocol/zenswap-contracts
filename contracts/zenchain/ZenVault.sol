@@ -5,6 +5,7 @@ import "./interfaces/IZenVault.sol";
 import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/vault-staking/IVaultStaking.sol";
+import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
 
 // TODO: handle reward distribution
 
@@ -107,8 +108,8 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         totalStake = totalStake.sub(amount);
 
         // Transfer the staking tokens from stakedBalances to unlocking
-        uint32 memory currentEra = VAULT_STAKING_CONTRACT.currentEra();
-        uint32 memory bondingDuration = VAULT_STAKING_CONTRACT.bondingDuration();
+        uint32 memory currentEra = STAKING_CONTRACT.currentEra();
+        uint32 memory bondingDuration = STAKING_CONTRACT.bondingDuration();
         UnlockChunk memory chunk = UnlockChunk(amount, currentEra + bondingDuration);
         unlocking[msg.sender] = unlocking[msg.sender].push(chunk);
 
@@ -117,7 +118,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
     // transfer caller's unlocked tokens to caller
     function withdrawUnlocked() external {
-        uint32 memory currentEra = VAULT_STAKING_CONTRACT.currentEra();
+        uint32 memory currentEra = STAKING_CONTRACT.currentEra();
         UnlockChunk[] storage chunks = unlocking[msg.sender];
         uint256 writeIndex = 0;
         uint256 totalToTransfer = 0;
