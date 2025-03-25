@@ -38,7 +38,7 @@ async function permitToken(
     args: [owner],
   });
 
-  const deadline = Math.floor(Date.now() / 1000) + 60 * 10; // 10 min
+  const deadline = Math.floor(Date.now() / 1000) + 60 * 60 * 24; // 24 hours
 
   const domain = {
     name: tokenName,
