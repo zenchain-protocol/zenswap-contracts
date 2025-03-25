@@ -5,7 +5,6 @@ import "./interfaces/IZenVault.sol";
 import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
-import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/vault-staking/IVaultStaking.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
 
 // TODO: handle reward distribution
