@@ -132,29 +132,16 @@ async function main() {
   deployedContracts.ETHUSDCPair = pairAddress as string;
 
   console.log("Approving Router for token transfers...");
-  await walletClient.writeContract({
+  const approveETHHash = await walletClient.writeContract({
     address: ETH.address,
     abi: ETH.abi,
     functionName: "approve",
     args: [routerAddress, parseUnits("1000", ETHdecimals)],
   });
-  await walletClient.writeContract({
-    address: USDC.address,
-    abi: USDC.abi,
-    functionName: "approve",
-    args: [routerAddress, parseUnits("1000", USDCdecimals)],
-  });
-  console.log("Approvals completed.");
-
+  await publicClient.waitForTransactionReceipt({ hash: approveETHHash });
   const allowanceETH = await publicClient.readContract({
     address: ETH.address,
     abi: ETH.abi,
-    functionName: "allowance",
-    args: [owner, routerAddress],
-  });
-  const allowanceUSDC = await publicClient.readContract({
-    address: USDC.address,
-    abi: USDC.abi,
     functionName: "allowance",
     args: [owner, routerAddress],
   });
@@ -162,10 +149,24 @@ async function main() {
     "ETH Allowance -> Router:",
     formatUnits(allowanceETH, ETHdecimals)
   );
+  const approveUSDCHash = await walletClient.writeContract({
+    address: USDC.address,
+    abi: USDC.abi,
+    functionName: "approve",
+    args: [routerAddress, parseUnits("1000", USDCdecimals)],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: approveUSDCHash });
+  const allowanceUSDC = await publicClient.readContract({
+    address: USDC.address,
+    abi: USDC.abi,
+    functionName: "allowance",
+    args: [owner, routerAddress],
+  });
   console.log(
     "USDC Allowance -> Router:",
     formatUnits(allowanceUSDC, USDCdecimals)
   );
+  console.log("Approvals completed.");
 
   const balanceETH = await publicClient.readContract({
     address: ETH.address,
