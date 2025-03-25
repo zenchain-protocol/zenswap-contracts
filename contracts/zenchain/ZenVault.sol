@@ -14,6 +14,10 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
     event StakingEnabled(uint32 era);
     event Staked(address indexed user, uint256 amount);
     event Unstaked(address indexed user, uint256 amount);
+    event Withdrawal(address indexed user, uint256 amount);
+    event EraExposureRecorded(uint32 indexed era, uint256 totalStake);
+    event VaultSlashed(uint32 indexed era, uint256 slash_amount);
+    event UserSlashed(address indexed user, uint32 indexed era, uint256 slash_amount);
 
     // A chunk of tokens that were staked but are now in the process of unlocking
     struct UnlockChunk {
@@ -74,7 +78,6 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
 
         emit Staked(msg.sender, amount);
     }
-
 
     /**
      * @notice Unstake tokens.
@@ -141,7 +144,8 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         if (totalToTransfer > 0) {
             this.transfer(msg.sender, totalToTransfer);
         }
-        // TODO: emit event
+
+        emit Withdrawal(msg.sender, totalToTransfer);
     }
 
     // Record the stake amount used for the current era
@@ -171,7 +175,8 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
         // Resize the array to remove users who are no longer staking
         stakers.length = writeIndex;
         lastEraUpdate = era;
-        // TODO: emit event
+
+        emit EraExposureRecorded(era, totalStake);
     }
 
     // Distribute vault slash among users in proportion to their share of the total exposure in the slash era
@@ -183,11 +188,12 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
             uint256 user_slash = exposure.value.mul(slash_amount).div(_totalStakeAtEra);
             _applySlashToUser(user_slash, exposure.staker);
         }
-        // TODO: emit event
+
+        emit VaultSlashed(era, era, slash_amount);
     }
 
     // Apply slash to individual user
-    function _applySlashToUser(uint256 slash_amount, address user) internal {
+    function _applySlashToUser(uint256 slash_amount, uint32 era, address user) internal {
         // Case 1: We can slash directly from user balance
         if (stakedBalances[user] >= slash_amount) {
             stakedBalances[user] = stakedBalances[user] - slash_amount;
@@ -211,7 +217,8 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard {
             }
             // TODO: remaining slash should never be positive here, but should I check if it is and handle it somehow?
         }
-        // TODO: emit event
+
+        emit UserSlashed(user, era, slash_amount);
     }
 
     /**
