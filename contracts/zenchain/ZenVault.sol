@@ -8,7 +8,6 @@ import "./Ownable.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
 
 // TODO: handle reward distribution
-// TODO: UniswapV2Pair is a UniswapV2ERC20, not a ZenSwapERC20. Need to fix inheritance. Should we even use ZenSwapERC20 if its only purpose is to change the token name/symbol?
 
 contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     using SafeMath for uint256;
@@ -36,6 +35,9 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
 
     // If false, new staking is not permitted.
     bool public isStakingEnabled;
+
+    // If false, withdrawals are not permitted. This can be used in the case of an emergency.
+    bool public isWithdrawEnabled;
 
     constructor(address token0, address token1)
     UniswapV2Pair(token0, token1)
@@ -136,6 +138,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
      * @custom:gas-optimization Uses in-place array filtering to avoid creating new arrays
      */
     function withdrawUnlocked() external nonReentrant {
+        require(isWithdrawEnabled, "Withdrawals are temporarily disabled.");
         uint32 memory currentEra = STAKING_CONTRACT.currentEra();
         UnlockChunk[] storage chunks = unlocking[msg.sender];
         uint256 writeIndex = 0;
@@ -302,12 +305,32 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
      *
      * @param isEnabled True to enable staking, false to disable it
      *
-     * @custom:emits No events are emitted
+     * @custom:emits StakingEnabled - Emitted when the staking status changes, with the new status value
      * @custom:security Only callable by the contract owner
      * @custom:usage This function is primarily used for emergency situations or
      *               maintenance periods where staking needs to be temporarily paused
      */
     function setIsStakingEnabled(bool isEnabled) external onlyOwner {
         isStakingEnabled = isEnabled;
+        emit StakingEnabled(isStakingEnabled);
+    }
+
+    /**
+     * @notice Controls whether withdrawals are permitted in the ZenVault
+     * @dev Allows the contract owner to enable or disable the withdrawal functionality.
+     *      This function provides an emergency switch to prevent withdrawals in case
+     *      of detected vulnerabilities or other critical issues.
+     *
+     *      The state variable `isWithdrawEnabled` is used as a check in withdrawal-related
+     *      functions to determine if withdrawals are currently permitted.
+     *
+     * @param isEnabled If true, withdrawals will be permitted; if false, withdrawals will be blocked
+     *
+     * @custom:security onlyOwner - This function can only be called by the contract owner
+     * @custom:emits WithdrawEnabled - Emitted when withdrawal status changes, with the new status as parameter
+     */
+    function setIsWithdrawEnabled(bool isEnabled) external onlyOwner {
+        isWithdrawEnabled = isEnabled;
+        emit WithdrawEnabled(isWithdrawEnabled);
     }
 }

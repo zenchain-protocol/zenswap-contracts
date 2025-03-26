@@ -9,11 +9,18 @@ interface IZenVault is IUniswapV2Pair {
 // ------------------------------------------------------------
 
     /**
-     * @notice Emitted when staking functionality is enabled on the vault
-     * @dev This event is triggered when staking is turned on, typically by the contract owner
-     * @param era The current era when staking was enabled
+     * @notice Emitted when staking functionality is enabled or disabled on the vault
+     * @dev This event is triggered when staking is turned on or off by the contract owner
+     * @param isEnabled True if staking was enabled, false if staking was disabled.
      */
-    event StakingEnabled(uint32 era);
+    event StakingEnabled(bool isEnabled);
+
+    /**
+     * @notice Emitted when withdrawal functionality is enabled or disabled on the vault
+     * @dev This event is triggered when the contract owner toggles the ability to withdraw tokens
+     * @param isEnabled True if withdrawals were enabled, false if withdrawals were disabled
+     */
+    event WithdrawEnabled(bool isEnabled);
 
     /**
      * @notice Emitted when a user stakes tokens in the vault
@@ -168,6 +175,8 @@ interface IZenVault is IUniswapV2Pair {
      * @return True if staking is enabled, false otherwise
      */
     function isStakingEnabled() external view returns (bool);
+
+    function isWithdrawEnabled() external view returns (bool);
 
 // ------------------------------------------------------------
 // Transaction (mutation) methods
