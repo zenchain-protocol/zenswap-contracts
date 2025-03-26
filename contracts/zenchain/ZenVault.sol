@@ -189,7 +189,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
      * @custom:security non-reentrant - Protected against reentrancy attacks
      * @custom:security-note This function manages critical staker exposure data used for reward calculations
      */
-    function recordEraStake(uint32 era) external nonReentrant {
+    function recordEraStake(uint32 era) external onlyOwner {
         require(era >= lastEraUpdate, "Era exposures have been finalized for the given era.");
         delete eraExposures[era];
 
