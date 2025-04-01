@@ -57,6 +57,12 @@ interface IZenVault is IUniswapV2Pair {
      */
     event EraExposureRecorded(uint32 indexed era, uint256 totalStake);
 
+    // TODO: documentation comment
+    event VaultRewardsDistributed(uint32 indexed era, uint256 reward_amount);
+
+    // TODO: documentation comment
+    event UserRewardsDistributed(address indexed user, uint32 indexed era, uint256 reward_amount);
+
     /**
      * @notice Emitted when the vault is slashed
      * @dev This event is triggered when tokens are removed from the vault due to validator misbehavior
@@ -208,6 +214,16 @@ interface IZenVault is IUniswapV2Pair {
      * @param era The era number for which to record stake data
      */
     function recordEraStake(uint32 era) external;
+
+
+    /**
+     * @notice Distributes rewards to stakers for a specific era
+     * @dev Called by the contract owner to distribute staking rewards to the vault
+     *      Triggers VaultRewardsDistributed event and calculates individual user rewards
+     * @param reward_amount The total amount of rewards to distribute
+     * @param era The era for which rewards are being distributed
+     */
+    function distributeRewards(uint256 reward_amount, uint32 era) external;
 
     /**
      * @notice Applies a slashing penalty to the vault

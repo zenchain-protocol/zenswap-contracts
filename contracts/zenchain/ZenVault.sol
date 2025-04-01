@@ -1,13 +1,11 @@
 pragma solidity ^0.8.20;
-import "@uniswap/v2-core/contracts/UniswapV2Pair.sol";
-import "./interfaces/IZenVault.sol";
 
+import "./interfaces/IZenVault.sol";
+import "@uniswap/v2-core/contracts/UniswapV2Pair.sol";
 import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
-
-// TODO: handle reward distribution
 
 contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     using SafeMath for uint256;
@@ -40,7 +38,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     bool public isWithdrawEnabled;
 
     constructor(address token0, address token1)
-    UniswapV2Pair(token0, token1)
+    ZenSwapPair(token0, token1)
     Ownable(address(0))
     {}
 
@@ -196,11 +194,15 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
         // set total stake
         totalStakeAtEra[era] = totalStake;
 
+        // track seen stakers
+        mapping(address => bool) memory markers;
+
         // Update era exposures
         uint256 writeIndex = 0;
         for (uint256 i = 0; i < stakers.length; i++) {
             address staker = stakers[i];
-            if (stakedBalances[staker] > 0) {
+            if (stakedBalances[staker] > 0 && !markers[staker]) {
+                markers[staker] = true;
                 // Add user to record their share of the era exposure
                 EraExposure memory exposure = EraExposure(staker, stakedBalances[staker]);
                 eraExposures[era].push(exposure);
@@ -217,6 +219,65 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
         lastEraUpdate = era;
 
         emit EraExposureRecorded(era, totalStake);
+    }
+
+    /**
+     * @notice Distributes rewards to stakers for a specific era
+     * @dev This function allows the contract owner to distribute rewards proportionally to stakers based on their
+     *      exposure during a specific era. The process involves:
+     *      1. Transferring reward tokens from the owner to the contract
+     *      2. Calculating each staker's share based on their exposure in the specified era
+     *      3. Adding rewards to stakers' balances without requiring them to claim separately
+     *      4. Incrementing the total stake with the reward amount
+     *
+     * The reward distribution uses a precision factor (1e12) to ensure accurate calculation of proportional rewards
+     * even when dealing with small amounts.
+     *
+     * @param reward_amount Amount of tokens to distribute as rewards (must be > 0)
+     * @param era The specific era for which to distribute rewards
+     *
+     * @custom:throws "Amount must be greater than zero." - If the reward amount is 0 or negative
+     * @custom:throws "Staking is not currently permitted in this ZenVault." - If staking is disabled
+     * @custom:throws "No stake for this era" - If there are no stakers recorded for the specified era
+     * @custom:throws Various errors may be thrown by the transferFrom function
+     *
+     * @custom:emits UserRewardsDistributed - For each user receiving rewards, including their address, era, and reward amount
+     * @custom:emits VaultRewardsDistributed - After all rewards are distributed, with the era and total reward amount
+     *
+     * @custom:security onlyOwner - Can only be called by the contract owner
+     * @custom:security-note Requires the reward tokens to be approved to this contract before distribution
+     */
+    function distributeRewards(uint256 reward_amount, uint32 era) external onlyOwner {
+        require(reward_amount > 0, "Amount must be greater than zero.");
+        require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
+
+        // Transfer the staking tokens from the reward account to this contract.
+        this.transferFrom(msg.sender, address(this), reward_amount);
+
+        uint256 _totalStakeAtEra = totalStakeAtEra[era];
+        require(_totalStakeAtEra > 0, "No stake for this era");
+
+        uint256 PRECISION_FACTOR = 1e12;
+        uint256 rewardRatio = reward_amount.mul(PRECISION_FACTOR) / _totalStakeAtEra;
+
+        // Distribute rewards proportionally to stakers based on their era exposure
+        EraExposure[] memory exposures = eraExposures[era];
+        uint256 exposuresLength = exposures.length;
+        for (uint256 i = 0; i < exposuresLength; i++) {
+            EraExposure memory exposure = exposures[i];
+            uint256 user_reward = exposure.value.mul(rewardRatio) / PRECISION_FACTOR;
+            address user = exposure.staker;
+            // Update the user's staked balance.
+            if (stakedBalances[user] == 0) {
+                stakers.push(user);
+            }
+            stakedBalances[user] = stakedBalances[user].add(user_reward);
+            // TODO: skip emitting event for each user to save gas cost?
+            emit UserRewardsDistributed(user, era, user_reward);
+        }
+
+        totalStake = totalStake.add(reward_amount);
+        emit VaultRewardsDistributed(era, reward_amount);
     }
 
     /**
@@ -242,14 +303,20 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
      */
     function doSlash(uint256 slash_amount, uint32 era) external onlyOwner {
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
+        require(_totalStakeAtEra > 0, "No stake for this era");
+
+        uint256 PRECISION_FACTOR = 1e12;
+        uint256 slashRatio = slash_amount.mul(PRECISION_FACTOR) / _totalStakeAtEra;
+
         EraExposure[] memory exposures = eraExposures[era];
-        for (uint256 i = 0; i < exposures.length; i++) {
+        uint256 exposuresLength = exposures.length;
+        for (uint256 i = 0; i < exposuresLength; i++) {
             EraExposure memory exposure = exposures[i];
-            uint256 user_slash = exposure.value.mul(slash_amount).div(_totalStakeAtEra);
-            _applySlashToUser(user_slash, exposure.staker);
+            uint256 user_slash = exposure.value.mul(slashRatio) / PRECISION_FACTOR;
+            _applySlashToUser(user_slash, era,exposure.staker);
         }
 
-        emit VaultSlashed(era, era, slash_amount);
+        emit VaultSlashed(era, slash_amount);
     }
 
     /**
@@ -293,6 +360,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
             // TODO: remaining slash should never be positive here. It should not be possible. But should I check if it is positive and handle it somehow?
         }
 
+        // TODO: skip emitting event for each user to save gas cost?
         emit UserSlashed(user, era, slash_amount);
     }
 
