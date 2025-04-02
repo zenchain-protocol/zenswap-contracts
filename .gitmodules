@@ -1,0 +1,3 @@
+[submodule "precompile-interfaces"]
+	path = precompile-interfaces
+	url = https://github.com/zenchain-protocol/precompile-interfaces.git
