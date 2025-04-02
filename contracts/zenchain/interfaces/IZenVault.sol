@@ -57,10 +57,21 @@ interface IZenVault is IUniswapV2Pair {
      */
     event EraExposureRecorded(uint32 indexed era, uint256 totalStake);
 
-    // TODO: documentation comment
+    /**
+     * @notice Emitted when rewards are distributed to the vault and its stakers.
+     * @dev This event is triggered when the distributeRewards function successfully allocates rewards to the vault
+     * @param era The era for which rewards are distributed (indexed for efficient filtering)
+     * @param reward_amount The total amount of tokens distributed as rewards
+     */
     event VaultRewardsDistributed(uint32 indexed era, uint256 reward_amount);
 
-    // TODO: documentation comment
+    /**
+     * @notice Emitted when rewards are distributed to an individual user
+     * @dev This event is triggered for each user when rewards are calculated and allocated based on their stake
+     * @param user The address of the user receiving rewards (indexed for efficient filtering)
+     * @param era The era for which the user is receiving rewards (indexed for efficient filtering)
+     * @param reward_amount The amount of tokens distributed to the user
+     */
     event UserRewardsDistributed(address indexed user, uint32 indexed era, uint256 reward_amount);
 
     /**
@@ -239,4 +250,11 @@ interface IZenVault is IUniswapV2Pair {
      * @param isEnabled True to enable staking, false to disable it
      */
     function setIsStakingEnabled(bool isEnabled) external;
+
+    /**
+     * @notice Enables or disables stake withdrawals
+     * @dev Controls whether new withdrawal requests can be accepted by the vault
+     * @param isEnabled True to enable withdrawals, false to disable it
+     */
+    function setIsWithdrawEnabled(bool isEnabled) external;
 }

@@ -3,7 +3,6 @@ pragma solidity =0.5.16;
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 import {ZenVault} from "./ZenVault.sol";
 import {IZenVault} from "./interfaces/IZenVault.sol";
-import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/vault-staking/IVaultStaking.sol";
 
 contract ZenVaultFactory is IUniswapV2Factory {
     address public feeTo;

@@ -5,7 +5,7 @@ import "@uniswap/v2-core/contracts/UniswapV2Pair.sol";
 import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
-import "/Users/kris/RustroverProjects/zenchain-protocol/zenchain-node/precompiles/staking/INativeStaking.sol";
+import "../../precompile-interfaces/INativeStaking.sol";
 
 contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     using SafeMath for uint256;
@@ -272,7 +272,6 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
                 stakers.push(user);
             }
             stakedBalances[user] = stakedBalances[user].add(user_reward);
-            // TODO: skip emitting event for each user to save gas cost?
             emit UserRewardsDistributed(user, era, user_reward);
         }
 
@@ -359,8 +358,6 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
             }
             // TODO: remaining slash should never be positive here. It should not be possible. But should I check if it is positive and handle it somehow?
         }
-
-        // TODO: skip emitting event for each user to save gas cost?
         emit UserSlashed(user, era, slash_amount);
     }
 
