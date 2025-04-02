@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import "./interfaces/IZenVault.sol";
-import "@uniswap/v2-core/contracts/UniswapV2Pair.sol";
-import "@uniswap/v2-core/contracts/libraries/SafeMath.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
-contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
-    using SafeMath for uint256;
+contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
+    // The liquidity pool token that can be staked in this vault.
+    IUniswapV2Pair public pool;
 
     // Mapping of user addresses to their unlocking balances.
     mapping(address => UnlockChunk[]) public unlocking;
@@ -18,6 +19,9 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
 
     // A list of stakers; roughly corresponds to keys of stakedBalances, but can be outdated.
     address[] private stakers;
+
+    // Mapping to track the last era a staker's address was processed in recordEraStake
+    mapping(address => uint32) private lastProcessedEraForStaker;
 
     // Mapping of era index to total stake;
     mapping(uint32 => uint256) public totalStakeAtEra;
@@ -37,10 +41,12 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     // If false, withdrawals are not permitted. This can be used in the case of an emergency.
     bool public isWithdrawEnabled;
 
-    constructor(address token0, address token1)
-    ZenSwapPair(token0, token1)
-    Ownable(address(0))
-    {}
+    // The account that receives awards from consensus staking, on behalf of the vault, and distributes the rewards among the vault stakers.
+    address public rewardAccount;
+
+    constructor(address pairAddress) Ownable(address(0)) {
+        pool = IUniswapV2Pair(pairAddress);
+    }
 
     /**
      * @notice Stakes tokens in the ZenVault
@@ -65,14 +71,14 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
         require(amount > 0, "Amount must be greater than zero.");
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
         // Transfer the staking tokens from the user to this contract.
-        this.transferFrom(msg.sender, address(this), amount);
+        pool.transferFrom(msg.sender, address(this), amount);
 
         // Update the user's staked balance.
         if (stakedBalances[msg.sender] == 0) {
             stakers.push(msg.sender);
         }
-        stakedBalances[msg.sender] = stakedBalances[msg.sender].add(amount);
-        totalStake = totalStake.add(amount);
+        stakedBalances[msg.sender] = stakedBalances[msg.sender] + amount;
+        totalStake = totalStake + amount;
 
         emit Staked(msg.sender, amount);
     }
@@ -80,13 +86,12 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     /**
      * @notice Unstake tokens.
      * @dev This function:
-     *      1. Reduces the user's staked balance
+     *      1. Reduces the caller's staked balance
      *      2. Reduces the total stake in the ZenVault
      *      3. Creates an unlock chunk that will become available after the bonding period
-     *      4. Does not immediately return tokens to the user - they must call withdrawUnlocked() after the bonding period
+     *      4. Does not immediately return tokens to the caller - they must call withdrawUnlocked() after the bonding period
      *
-     * @param user Address of the user who is unstaking tokens
-     * @param _amount Amount of tokens to unstake (must be > 0 and <= user's staked balance)
+     * @param amount Amount of tokens to unstake (must be > 0 and <= user's staked balance)
      *
      * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
      * @custom:throws "Insufficient staked balance." - If the user's staked balance is less than the requested amount
@@ -101,14 +106,14 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
         require(stakedBalances[msg.sender] >= amount, "Insufficient staked balance.");
 
         // Update the user's staked balance.
-        stakedBalances[msg.sender] = stakedBalances[msg.sender].sub(amount);
-        totalStake = totalStake.sub(amount);
+        stakedBalances[msg.sender] = stakedBalances[msg.sender] - amount;
+        totalStake = totalStake - amount;
 
         // Transfer the staking tokens from stakedBalances to unlocking
-        uint32 memory currentEra = STAKING_CONTRACT.currentEra();
-        uint32 memory bondingDuration = STAKING_CONTRACT.bondingDuration();
+        uint32 currentEra = STAKING_CONTRACT.currentEra();
+        uint32 bondingDuration = STAKING_CONTRACT.bondingDuration();
         UnlockChunk memory chunk = UnlockChunk(amount, currentEra + bondingDuration);
-        unlocking[msg.sender] = unlocking[msg.sender].push(chunk);
+        unlocking[msg.sender].push(chunk);
 
         emit Unstaked(msg.sender, amount);
     }
@@ -137,14 +142,14 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
      */
     function withdrawUnlocked() external nonReentrant {
         require(isWithdrawEnabled, "Withdrawals are temporarily disabled.");
-        uint32 memory currentEra = STAKING_CONTRACT.currentEra();
+        uint32 currentEra = STAKING_CONTRACT.currentEra();
         UnlockChunk[] storage chunks = unlocking[msg.sender];
         uint256 writeIndex = 0;
         uint256 totalToTransfer = 0;
 
         // Iterate over all chunks
         for (uint256 i = 0; i < chunks.length; i++) {
-            UnlockChunk chunk = chunks[i];
+            UnlockChunk memory chunk = chunks[i];
             if (chunk.era <= currentEra) {
                 // Chunk is unlocked: add its value to the total to transfer
                 totalToTransfer += chunk.value;
@@ -157,52 +162,52 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
             }
         }
 
-        // Resize the array to remove unlocked chunks
-        chunks.length = writeIndex;
+        // Remove unlocked chunks by popping excess elements
+        while (chunks.length > writeIndex) {
+            chunks.pop();
+        }
 
         // Transfer unlocked tokens to the caller, if any
         if (totalToTransfer > 0) {
-            this.transfer(msg.sender, totalToTransfer);
+            pool.transfer(msg.sender, totalToTransfer);
         }
 
         emit Withdrawal(msg.sender, totalToTransfer);
     }
 
     /**
-     * @notice Records the total stake and individual staker exposures for a specific era
-     * @dev Updates the stake record for an era, capturing the current state of all active stakers.
+     * @notice Records the total stake and individual staker exposures for the current era
+     * @dev Updates the stake record for the era, capturing the current state of all active stakers.
      *      This function performs the following operations:
      *      1. Validates that the era is not already finalized
-     *      2. Records the total stake amount for the specified era
+     *      2. Records the total stake amount for the era
      *      3. Updates the list of staker exposures for the era, capturing each staker's balance
      *      4. Cleans up the stakers array by removing users with zero balance
      *      5. Updates the lastEraUpdate value to mark this era as processed
      *
-     * @param era The era number to record stake information for (must be >= lastEraUpdate)
-     *
-     * @custom:throws "Era exposures have been finalized for the given era." - If trying to update an era that's already finalized
+     * @custom:throws "Era exposures have been finalized for the current era." - If trying to call this function twice in the same era
      *
      * @custom:emits EraExposureRecorded - When era stake is successfully recorded, with era number and total stake amount
      *
      * @custom:security non-reentrant - Protected against reentrancy attacks
      * @custom:security-note This function manages critical staker exposure data used for reward calculations
      */
-    function recordEraStake(uint32 era) external onlyOwner {
-        require(era >= lastEraUpdate, "Era exposures have been finalized for the given era.");
-        delete eraExposures[era];
+    function recordEraStake() external {
+        uint32 era = STAKING_CONTRACT.currentEra();
+        require(era > lastEraUpdate, "Era exposures have been finalized for the current era.");
 
         // set total stake
         totalStakeAtEra[era] = totalStake;
-
-        // track seen stakers
-        mapping(address => bool) memory markers;
+        // set lastUpdate era
+        lastEraUpdate = era;
 
         // Update era exposures
         uint256 writeIndex = 0;
-        for (uint256 i = 0; i < stakers.length; i++) {
+        uint256 currentStakersLength = stakers.length;
+        for (uint256 i = 0; i < currentStakersLength; i++) {
             address staker = stakers[i];
-            if (stakedBalances[staker] > 0 && !markers[staker]) {
-                markers[staker] = true;
+            if (stakedBalances[staker] > 0 && lastProcessedEraForStaker[staker] < era) {
+                lastProcessedEraForStaker[staker] = era;
                 // Add user to record their share of the era exposure
                 EraExposure memory exposure = EraExposure(staker, stakedBalances[staker]);
                 eraExposures[era].push(exposure);
@@ -215,8 +220,9 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
         }
 
         // Resize the array to remove users who are no longer staking
-        stakers.length = writeIndex;
-        lastEraUpdate = era;
+        while (stakers.length > writeIndex) {
+            stakers.pop();
+        }
 
         emit EraExposureRecorded(era, totalStake);
     }
@@ -248,34 +254,35 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
      * @custom:security-note Requires the reward tokens to be approved to this contract before distribution
      */
     function distributeRewards(uint256 reward_amount, uint32 era) external onlyOwner {
-        require(reward_amount > 0, "Amount must be greater than zero.");
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
+        require(reward_amount > 0, "Amount must be greater than zero.");
+        require(pool.allowance(rewardAccount, address(this)) >= reward_amount, "Not enough allowance to transfer rewards from the vault's reward account to the vault.");
 
         // Transfer the staking tokens from the reward account to this contract.
-        this.transferFrom(msg.sender, address(this), reward_amount);
+        pool.transferFrom(rewardAccount, address(this), reward_amount);
 
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         require(_totalStakeAtEra > 0, "No stake for this era");
 
         uint256 PRECISION_FACTOR = 1e12;
-        uint256 rewardRatio = reward_amount.mul(PRECISION_FACTOR) / _totalStakeAtEra;
+        uint256 rewardRatio = reward_amount * PRECISION_FACTOR / _totalStakeAtEra;
 
         // Distribute rewards proportionally to stakers based on their era exposure
         EraExposure[] memory exposures = eraExposures[era];
         uint256 exposuresLength = exposures.length;
         for (uint256 i = 0; i < exposuresLength; i++) {
             EraExposure memory exposure = exposures[i];
-            uint256 user_reward = exposure.value.mul(rewardRatio) / PRECISION_FACTOR;
+            uint256 user_reward = exposure.value * rewardRatio / PRECISION_FACTOR;
             address user = exposure.staker;
             // Update the user's staked balance.
             if (stakedBalances[user] == 0) {
                 stakers.push(user);
             }
-            stakedBalances[user] = stakedBalances[user].add(user_reward);
+            stakedBalances[user] = stakedBalances[user] + user_reward;
             emit UserRewardsDistributed(user, era, user_reward);
         }
 
-        totalStake = totalStake.add(reward_amount);
+        totalStake = totalStake + reward_amount;
         emit VaultRewardsDistributed(era, reward_amount);
     }
 
@@ -305,13 +312,13 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
         require(_totalStakeAtEra > 0, "No stake for this era");
 
         uint256 PRECISION_FACTOR = 1e12;
-        uint256 slashRatio = slash_amount.mul(PRECISION_FACTOR) / _totalStakeAtEra;
+        uint256 slashRatio = slash_amount * PRECISION_FACTOR / _totalStakeAtEra;
 
         EraExposure[] memory exposures = eraExposures[era];
         uint256 exposuresLength = exposures.length;
         for (uint256 i = 0; i < exposuresLength; i++) {
             EraExposure memory exposure = exposures[i];
-            uint256 user_slash = exposure.value.mul(slashRatio) / PRECISION_FACTOR;
+            uint256 user_slash = exposure.value * slashRatio / PRECISION_FACTOR;
             _applySlashToUser(user_slash, era,exposure.staker);
         }
 
@@ -346,7 +353,7 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
             // slash from unlocking chunks
             UnlockChunk[] storage chunks = unlocking[user];
             for (uint256 i = chunks.length - 1; i >= 0; i--) {
-                UnlockChunk chunk = chunks[i];
+                UnlockChunk storage chunk = chunks[i];
                 if (chunk.value >= remaining_slash) {
                     chunk.value = chunk.value - remaining_slash;
                     remaining_slash = 0;
@@ -397,5 +404,10 @@ contract ZenVault is IZenVault, UniswapV2Pair, ReentrancyGuard, Ownable {
     function setIsWithdrawEnabled(bool isEnabled) external onlyOwner {
         isWithdrawEnabled = isEnabled;
         emit WithdrawEnabled(isWithdrawEnabled);
+    }
+
+    function setRewardAccount(address _rewardAccount) external onlyOwner {
+        rewardAccount = _rewardAccount;
+        emit RewardAccountSet(rewardAccount);
     }
 }

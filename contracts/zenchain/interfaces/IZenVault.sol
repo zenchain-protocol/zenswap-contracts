@@ -1,8 +1,9 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
 import '@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol';
 
-interface IZenVault is IUniswapV2Pair {
+interface IZenVault {
 
 // ------------------------------------------------------------
 // Events
@@ -93,6 +94,8 @@ interface IZenVault is IUniswapV2Pair {
      */
     event UserSlashed(address indexed user, uint32 indexed era, uint256 slash_amount);
 
+    event RewardAccountSet(address account);
+
 // ------------------------------------------------------------
 // Structs
 // ------------------------------------------------------------
@@ -135,6 +138,8 @@ interface IZenVault is IUniswapV2Pair {
 // ------------------------------------------------------------
 // Public state variable view methods
 // ------------------------------------------------------------
+
+    function pool() external view returns (IUniswapV2Pair);
 
     /**
      * @notice Returns information about a user's unlocking token chunk
@@ -195,6 +200,8 @@ interface IZenVault is IUniswapV2Pair {
 
     function isWithdrawEnabled() external view returns (bool);
 
+    function rewardAccount() external view returns (address);
+
 // ------------------------------------------------------------
 // Transaction (mutation) methods
 // ------------------------------------------------------------
@@ -220,11 +227,10 @@ interface IZenVault is IUniswapV2Pair {
     function withdrawUnlocked() external;
 
     /**
-     * @notice Records the vault's total stake for a specific era
+     * @notice Records the vault's total stake for the current era
      * @dev Updates staking snapshots used for rewards and slashing calculations
-     * @param era The era number for which to record stake data
      */
-    function recordEraStake(uint32 era) external;
+    function recordEraStake() external;
 
 
     /**
