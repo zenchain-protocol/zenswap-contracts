@@ -1,14 +1,10 @@
 import fs from "fs";
 import path from "path";
 import hre, { network } from "hardhat";
-import WETH9 from "../WETH9.json";
+import { formatUnits, parseUnits } from "viem";
 import factoryArtifact from "@uniswap/v2-core/build/UniswapV2Factory.json";
 import routerArtifact from "@uniswap/v2-periphery/build/UniswapV2Router02.json";
-import { formatUnits, parseSignature, parseUnits } from "viem";
-import {
-  PublicClient,
-  WalletClient,
-} from "@nomicfoundation/hardhat-viem/types";
+import WETH9 from "../WETH9.json";
 
 type DeployedContracts = {
   factory: string;
@@ -20,71 +16,6 @@ type DeployedContracts = {
 };
 
 const PACKAGE_JSON_PATH = path.join(__dirname, "../package.json");
-
-async function permitToken(
-  walletClient: WalletClient,
-  publicClient: PublicClient,
-  tokenAddress: `0x${string}`,
-  owner: `0x${string}`,
-  spender: `0x${string}`,
-  tokenName: string,
-  abi: any,
-  value: bigint
-) {
-  const nonce = await publicClient.readContract({
-    address: tokenAddress,
-    abi: abi,
-    functionName: "nonces",
-    args: [owner],
-  });
-
-  const deadline = Math.floor(Date.now() / 1000) + 60 * 10; // 10 min
-
-  const domain = {
-    name: tokenName,
-    version: "1",
-    chainId: await publicClient.getChainId(),
-    verifyingContract: tokenAddress,
-  };
-
-  const types = {
-    Permit: [
-      { name: "owner", type: "address" },
-      { name: "spender", type: "address" },
-      { name: "value", type: "uint256" },
-      { name: "nonce", type: "uint256" },
-      { name: "deadline", type: "uint256" },
-    ],
-  };
-
-  const message = {
-    owner,
-    spender,
-    value,
-    nonce,
-    deadline,
-  };
-
-  const signature = await walletClient.signTypedData({
-    domain,
-    types,
-    primaryType: "Permit",
-    message,
-  });
-
-  const { r, s, v } = parseSignature(signature);
-
-  console.log("Permit Signature:", { r, s, v });
-
-  await walletClient.writeContract({
-    address: tokenAddress,
-    abi: abi,
-    functionName: "permit",
-    args: [owner, spender, value, deadline, v!, r, s],
-  });
-
-  console.log(`Permit granted for ${tokenAddress}`);
-}
 
 async function updatePackageJson(
   networkName: string,
@@ -128,7 +59,11 @@ async function main() {
   deployedContracts.factory = factoryAddress;
 
   const ETHdecimals = 18;
-  const ETH = await hre.viem.deployContract("MockToken", ["Ether", "ETH", ETHdecimals]);
+  const ETH = await hre.viem.deployContract("MockToken", [
+    "Ether",
+    "ETH",
+    ETHdecimals,
+  ]);
   console.log(`ETH deployed to ${ETH.address}`);
   deployedContracts.ETH = ETH.address;
 
@@ -165,18 +100,20 @@ async function main() {
   deployedContracts.router = routerAddress;
 
   console.log("Minting 1000 ETH and 1000 USDC...");
-  await walletClient.writeContract({
+  const mintETHhash = await walletClient.writeContract({
     address: ETH.address,
     abi: ETH.abi,
     functionName: "mint",
     args: [owner, parseUnits("1000", ETHdecimals)],
   });
-  await walletClient.writeContract({
+  await publicClient.waitForTransactionReceipt({ hash: mintETHhash });
+  const mintUSDChash = await walletClient.writeContract({
     address: USDC.address,
     abi: USDC.abi,
     functionName: "mint",
     args: [owner, parseUnits("1000", USDCdecimals)],
   });
+  await publicClient.waitForTransactionReceipt({ hash: mintUSDChash });
   console.log("Minting successful!");
 
   console.log("Creating ETH-USDC Pair...");
@@ -196,42 +133,42 @@ async function main() {
   console.log(`ETH-USDC pair deployed at: ${pairAddress}`);
   deployedContracts.ETHUSDCPair = pairAddress as string;
 
-  console.log("Permitting Router for token transfers...");
-  await permitToken(
-    walletClient,
-    publicClient,
-    ETH.address,
-    owner,
-    routerAddress,
-    "Ether",
-    ETH.abi,
-    parseUnits("1000", ETHdecimals)
-  );
-  await permitToken(
-    walletClient,
-    publicClient,
-    USDC.address,
-    owner,
-    routerAddress,
-    "USD Coin",
-    USDC.abi,
-    parseUnits("1000", USDCdecimals)
-  );
-
+  console.log("Approving Router for token transfers...");
+  const approveETHHash = await walletClient.writeContract({
+    address: ETH.address,
+    abi: ETH.abi,
+    functionName: "approve",
+    args: [routerAddress, parseUnits("1000", ETHdecimals)],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: approveETHHash });
   const allowanceETH = await publicClient.readContract({
     address: ETH.address,
     abi: ETH.abi,
     functionName: "allowance",
     args: [owner, routerAddress],
   });
+  console.log(
+    "ETH Allowance -> Router:",
+    formatUnits(allowanceETH, ETHdecimals)
+  );
+  const approveUSDCHash = await walletClient.writeContract({
+    address: USDC.address,
+    abi: USDC.abi,
+    functionName: "approve",
+    args: [routerAddress, parseUnits("1000", USDCdecimals)],
+  });
+  await publicClient.waitForTransactionReceipt({ hash: approveUSDCHash });
   const allowanceUSDC = await publicClient.readContract({
     address: USDC.address,
     abi: USDC.abi,
     functionName: "allowance",
     args: [owner, routerAddress],
   });
-  console.log("ETH Allowance -> Router:", formatUnits(allowanceETH, ETHdecimals));
-  console.log("USDC Allowance -> Router:", formatUnits(allowanceUSDC, USDCdecimals));
+  console.log(
+    "USDC Allowance -> Router:",
+    formatUnits(allowanceUSDC, USDCdecimals)
+  );
+  console.log("Approvals completed.");
 
   const balanceETH = await publicClient.readContract({
     address: ETH.address,
