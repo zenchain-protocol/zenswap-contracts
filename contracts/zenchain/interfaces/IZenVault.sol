@@ -94,6 +94,11 @@ interface IZenVault {
      */
     event UserSlashed(address indexed user, uint32 indexed era, uint256 slash_amount);
 
+    /**
+     * @notice Emitted when the reward account address is updated
+     * @dev This event is triggered when the contract owner sets a new reward account address
+     * @param account The address of the new reward account that will receive and distribute staking rewards
+     */
     event RewardAccountSet(address account);
 
 // ------------------------------------------------------------
@@ -139,6 +144,11 @@ interface IZenVault {
 // Public state variable view methods
 // ------------------------------------------------------------
 
+    /**
+     * @notice Returns the Uniswap V2 pair contract associated with this vault
+     * @dev This pair contract represents the liquidity pool tokens that can be staked in the vault
+     * @return The IUniswapV2Pair interface of the associated liquidity pool
+     */
     function pool() external view returns (IUniswapV2Pair);
 
     /**
@@ -198,8 +208,18 @@ interface IZenVault {
      */
     function isStakingEnabled() external view returns (bool);
 
+    /**
+     * @notice Returns whether token withdrawals are currently enabled
+     * @dev This status is controlled by the contract owner and affects the ability of users to withdraw their tokens
+     * @return True if withdrawals are enabled, false if withdrawals are disabled
+     */
     function isWithdrawEnabled() external view returns (bool);
 
+    /**
+     * @notice Returns the address that receives staking rewards on behalf of the vault
+     * @dev This account is responsible for collecting and distributing rewards to vault stakers
+     * @return The address of the reward account
+     */
     function rewardAccount() external view returns (address);
 
 // ------------------------------------------------------------
@@ -231,7 +251,6 @@ interface IZenVault {
      * @dev Updates staking snapshots used for rewards and slashing calculations
      */
     function recordEraStake() external;
-
 
     /**
      * @notice Distributes rewards to stakers for a specific era

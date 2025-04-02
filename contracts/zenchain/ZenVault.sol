@@ -44,6 +44,17 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // The account that receives awards from consensus staking, on behalf of the vault, and distributes the rewards among the vault stakers.
     address public rewardAccount;
 
+    /**
+     * @notice Initializes the ZenVault contract with a Uniswap V2 pair address
+     * @dev Sets up the contract by:
+     *      1. Inheriting from Ownable with a null initial owner (address(0))
+     *      2. Initializing the Uniswap V2 pair interface that represents the pool tokens managed by this vault
+     *
+     * @param pairAddress The address of the Uniswap V2 pair contract to be used as the staking token
+     *                    This should be a valid IUniswapV2Pair compatible contract address
+     *
+     * @custom:security-note The contract intentionally starts with the zero address as its owner.
+     */
     constructor(address pairAddress) Ownable(address(0)) {
         pool = IUniswapV2Pair(pairAddress);
     }
@@ -406,6 +417,17 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         emit WithdrawEnabled(isWithdrawEnabled);
     }
 
+    /**
+     * @notice Updates the reward account address
+     * @dev Sets a new address for the reward account which receives and distributes staking rewards.
+     *      Can only be called by the contract owner.
+     *
+     * @param _rewardAccount The new reward account address
+     *
+     * @custom:emits RewardAccountSet - When the reward account is successfully updated
+     *
+     * @custom:security onlyOwner - Restricted to the contract owner
+     */
     function setRewardAccount(address _rewardAccount) external onlyOwner {
         rewardAccount = _rewardAccount;
         emit RewardAccountSet(rewardAccount);
