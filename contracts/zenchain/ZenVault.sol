@@ -45,31 +45,18 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     address public rewardAccount;
 
     /**
-     * @notice Constructor for the ZenVault contract
-     * @dev Sets up the contract by inheriting from Ownable with a null initial owner (address(0))
-     *      The pool address is no longer set in the constructor, but via the initialize function
+     * @notice Initializes the ZenVault contract with a Uniswap V2 pair address
+     * @dev Sets up the contract by:
+     *      1. Inheriting from Ownable with a null initial owner (address(0))
+     *      2. Initializing the Uniswap V2 pair interface that represents the pool tokens managed by this vault
      *
-     * @custom:security-note The contract intentionally starts with the zero address as its owner
+     * @param pairAddress The address of the Uniswap V2 pair contract to be used as the staking token
+     *                    This should be a valid IUniswapV2Pair compatible contract address
+     *
+     * @custom:security-note The contract intentionally starts with the zero address as its owner.
      */
-    constructor() Ownable(address(0)) {}
-
-    /**
-     * @notice Initializes the ZenVault with a Uniswap V2 pair address and reward account
-     * @dev Sets the pool interface that represents the LP tokens managed by this vault
-     *      and the reward account for distributing rewards
-     *      Can only be called once and only by the contract owner
-     *
-     * @param _pairAddress The address of the Uniswap V2 pair contract to be used as the staking token
-     * @param _rewardAccount The address that receives rewards from consensus staking and distributes them to vault stakers
-     *
-     * @custom:throws "Already initialized" - If the pool has already been set
-     * @custom:emits VaultInitialized - When the vault is successfully initialized, with the pool address and reward account
-     */
-    function initialize(address _pairAddress, address _rewardAccount) external onlyOwner {
-        require(address(pool) == address(0), "Already initialized");
-        pool = IUniswapV2Pair(_pairAddress);
-        rewardAccount = _rewardAccount;
-        emit VaultInitialized(address(pool), rewardAccount);
+    constructor(address pairAddress) Ownable(address(0)) {
+        pool = IUniswapV2Pair(pairAddress);
     }
 
     /**
@@ -437,12 +424,12 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *
      * @param _rewardAccount The new reward account address
      *
-     * @custom:emits RewardAccountUpdated - When the reward account is successfully updated
+     * @custom:emits RewardAccountSet - When the reward account is successfully updated
      *
      * @custom:security onlyOwner - Restricted to the contract owner
      */
     function setRewardAccount(address _rewardAccount) external onlyOwner {
         rewardAccount = _rewardAccount;
-        emit RewardAccountUpdated(rewardAccount);
+        emit RewardAccountSet(rewardAccount);
     }
 }

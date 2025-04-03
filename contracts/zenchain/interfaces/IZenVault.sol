@@ -99,15 +99,7 @@ interface IZenVault {
      * @dev This event is triggered when the contract owner sets a new reward account address
      * @param account The address of the new reward account that will receive and distribute staking rewards
      */
-    event RewardAccountUpdated(address account);
-
-    /**
-     * @notice Emitted when the vault is initialized with a pool and reward account
-     * @dev This event is triggered once when the initialize function is called by the contract owner
-     * @param pool The address of the Uniswap V2 pair contract used as the staking token
-     * @param rewardAccount The address that will receive and distribute rewards to vault stakers
-     */
-    event VaultInitialized(address pool, address rewardAccount);
+    event RewardAccountSet(address account);
 
 // ------------------------------------------------------------
 // Structs
@@ -233,14 +225,6 @@ interface IZenVault {
 // ------------------------------------------------------------
 // Transaction (mutation) methods
 // ------------------------------------------------------------
-
-    /**
-     * @notice Initializes the vault with a Uniswap V2 liquidity pair address and reward account
-     * @dev Can only be called once by the contract owner to set the LP token and reward account
-     * @param _pairAddress The address of the Uniswap V2 pair contract to be used as the staking token
-     * @param _rewardAccount The address that receives and distributes consensus staking rewards
-     */
-    function initialize(address _pairAddress, address _rewardAccount) external;
 
     /**
      * @notice Stakes tokens in the vault
