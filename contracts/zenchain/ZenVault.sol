@@ -20,14 +20,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // A list of stakers; roughly corresponds to keys of stakedBalances, but can be outdated.
     address[] private stakers;
 
-    // Mapping to track the last era a staker's address was processed in recordEraStake
-    mapping(address => uint32) private lastProcessedEraForStaker;
-
-    // Mapping of era index to total stake;
+    // Mapping of era index to total stake
     mapping(uint32 => uint256) public totalStakeAtEra;
 
-    // Mapping of era index to list of staker exposures;
+    // Mapping of era index to list of staker exposures
     mapping(uint32 => EraExposure[]) public eraExposures;
+
+    // Mapping of era to staker to exposure.
+    // This is used to track whether a staker was already processed in recordEraStake.
+    mapping(uint32 => mapping(address => uint256)) public stakerEraExposures;
 
     // The total amount staked
     uint256 public totalStake;
@@ -39,7 +40,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     bool public isStakingEnabled;
 
     // If false, withdrawals are not permitted. This can be used in the case of an emergency.
-    bool public isWithdrawEnabled;
+    bool public isWithdrawEnabled = true;
 
     // The account that receives awards from consensus staking, on behalf of the vault, and distributes the rewards among the vault stakers.
     address public rewardAccount;
@@ -217,10 +218,11 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 currentStakersLength = stakers.length;
         for (uint256 i = 0; i < currentStakersLength; i++) {
             address staker = stakers[i];
-            if (stakedBalances[staker] > 0 && lastProcessedEraForStaker[staker] < era) {
-                lastProcessedEraForStaker[staker] = era;
+            uint256 stakeAmount = stakedBalances[staker];
+            if (stakeAmount > 0 && stakerEraExposures[era][staker] == 0) {
+                stakerEraExposures[era][staker] = stakeAmount;
                 // Add user to record their share of the era exposure
-                EraExposure memory exposure = EraExposure(staker, stakedBalances[staker]);
+                EraExposure memory exposure = EraExposure(staker, stakeAmount);
                 eraExposures[era].push(exposure);
                 // User is still staking
                 if (writeIndex != i) {
