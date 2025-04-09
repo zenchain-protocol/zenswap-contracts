@@ -24,6 +24,9 @@ describe("ZenVault", function () {
   const BONDING_DURATION = 2; // 2 eras
 
   beforeEach(async function () {
+    // Reset the blockchain
+    await ethers.provider.send("hardhat_reset", []);
+
     // Get signers
     [owner, user1, user2, rewardAccount] = await ethers.getSigners();
 
@@ -43,22 +46,21 @@ describe("ZenVault", function () {
 
     // Deploy mock staking precompile
     const MockStakingPrecompileFactory = await ethers.getContractFactory("MockStakingPrecompile");
-    mockStakingPrecompile = await MockStakingPrecompileFactory.deploy(INITIAL_ERA, BONDING_DURATION);
+    const tempMockStakingPrecompile = await MockStakingPrecompileFactory.deploy(INITIAL_ERA, BONDING_DURATION);
     // Get the bytecode of the deployed mock staking precompile
-    const mockStakingPrecompileCode = await ethers.provider.getCode(await mockStakingPrecompile.getAddress());
+    const mockStakingPrecompileCode = await ethers.provider.getCode(await tempMockStakingPrecompile.getAddress());
     // Set the code at the STAKING_ADDRESS to the mock staking precompile bytecode
     await ethers.provider.send("hardhat_setCode", [
       STAKING_ADDRESS,
       mockStakingPrecompileCode
     ]);
     // Must set era and bonding duration again, because the stored values are not transferred with the bytecode.
-    const stakingPrecompileAtAddress = await ethers.getContractAt(
+    mockStakingPrecompile = await ethers.getContractAt(
       "MockStakingPrecompile",
       STAKING_ADDRESS
     );
-    await stakingPrecompileAtAddress.advanceEra(INITIAL_ERA);
-    await stakingPrecompileAtAddress.setBondingDuration(BONDING_DURATION);
-
+    await mockStakingPrecompile.advanceEra(INITIAL_ERA);
+    await mockStakingPrecompile.setBondingDuration(BONDING_DURATION);
 
     // Deploy ZenVault
     const ZenVaultFactory = await ethers.getContractFactory("ZenVault");
@@ -374,7 +376,7 @@ describe("ZenVault", function () {
 
     it("should not allow non-owners to distribute rewards", async function () {
       await expect(zenVault.connect(user1).distributeRewards(rewardAmount, INITIAL_ERA))
-        .to.be.revertedWith("Ownable: caller is not the owner");
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address);
     });
 
     it("should not allow distributing rewards when staking is disabled", async function () {
@@ -453,7 +455,7 @@ describe("ZenVault", function () {
 
     it("should not allow non-owners to slash", async function () {
       await expect(zenVault.connect(user1).doSlash(slashAmount, INITIAL_ERA))
-        .to.be.revertedWith("Ownable: caller is not the owner");
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
 
     it("should not allow slashing for an era with no stake", async function () {
@@ -497,7 +499,7 @@ describe("ZenVault", function () {
 
     it("should not allow non-owners to enable/disable staking", async function () {
       await expect(zenVault.connect(user1).setIsStakingEnabled(false))
-        .to.be.revertedWith("Ownable: caller is not the owner");
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
 
     it("should allow owner to enable/disable withdrawals", async function () {
@@ -518,7 +520,7 @@ describe("ZenVault", function () {
 
     it("should not allow non-owners to enable/disable withdrawals", async function () {
       await expect(zenVault.connect(user1).setIsWithdrawEnabled(false))
-        .to.be.revertedWith("Ownable: caller is not the owner");
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
 
     it("should allow owner to set reward account", async function () {
@@ -535,7 +537,7 @@ describe("ZenVault", function () {
 
     it("should not allow non-owners to set reward account", async function () {
       await expect(zenVault.connect(user1).setRewardAccount(user2.address))
-        .to.be.revertedWith("Ownable: caller is not the owner");
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
   });
 });
