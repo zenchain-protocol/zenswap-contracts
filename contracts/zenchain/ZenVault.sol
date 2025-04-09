@@ -8,6 +8,8 @@ import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
+    uint256 constant public PRECISION_FACTOR = 1e18;
+
     // The liquidity pool token that can be staked in this vault.
     IUniswapV2Pair public pool;
 
@@ -282,7 +284,6 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         require(_totalStakeAtEra > 0, "No stake for this era");
 
-        uint256 PRECISION_FACTOR = 1e12;
         uint256 rewardRatio = rewardAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
         // Distribute rewards proportionally to stakers based on their era exposure
@@ -335,7 +336,6 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         require(_totalStakeAtEra > 0, "No stake for this era");
 
-        uint256 PRECISION_FACTOR = 1e12;
         uint256 slashRatio = slashAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
         uint256 totalSlashed = 0;

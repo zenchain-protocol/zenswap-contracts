@@ -2,14 +2,13 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
+import {setupTestEnvironment} from "./utils";
 
 describe("ZenVault", function () {
   // Contracts
   let zenVault: ZenVault;
-  let mockToken1: MockToken;
-  let mockToken2: MockToken;
   let mockStakingPrecompile: MockStakingPrecompile;
-  let lpToken: MockToken; // We'll use a MockToken as LP token for simplicity
+  let lpToken: MockToken;
 
   // Signers
   let owner: SignerWithAddress;
@@ -21,54 +20,22 @@ describe("ZenVault", function () {
   const STAKING_ADDRESS = "0x0000000000000000000000000000000000000800";
   const INITIAL_SUPPLY = ethers.parseEther("1000000");
   const INITIAL_ERA = 1;
-  const BONDING_DURATION = 2; // 2 eras
+  const BONDING_DURATION = 2;
 
   beforeEach(async function () {
-    // Reset the blockchain
-    await ethers.provider.send("hardhat_reset", []);
-
-    // Get signers
-    [owner, user1, user2, rewardAccount] = await ethers.getSigners();
-
-    // Deploy mock tokens
-    const MockTokenFactory = await ethers.getContractFactory("MockToken");
-    mockToken1 = await MockTokenFactory.deploy("Token A", "TKNA", 18);
-    mockToken2 = await MockTokenFactory.deploy("Token B", "TKNB", 18);
-    lpToken = await MockTokenFactory.deploy("LP Token", "LP", 18);
-
-    // Mint initial supply
-    await mockToken1.mint(owner.address, INITIAL_SUPPLY);
-    await mockToken2.mint(owner.address, INITIAL_SUPPLY);
-    await lpToken.mint(owner.address, INITIAL_SUPPLY);
-    await lpToken.mint(user1.address, INITIAL_SUPPLY);
-    await lpToken.mint(user2.address, INITIAL_SUPPLY);
-    await lpToken.mint(rewardAccount.address, INITIAL_SUPPLY);
-
-    // Deploy mock staking precompile
-    const MockStakingPrecompileFactory = await ethers.getContractFactory("MockStakingPrecompile");
-    const tempMockStakingPrecompile = await MockStakingPrecompileFactory.deploy(INITIAL_ERA, BONDING_DURATION);
-    // Get the bytecode of the deployed mock staking precompile
-    const mockStakingPrecompileCode = await ethers.provider.getCode(await tempMockStakingPrecompile.getAddress());
-    // Set the code at the STAKING_ADDRESS to the mock staking precompile bytecode
-    await ethers.provider.send("hardhat_setCode", [
+    const testEnvironment = await setupTestEnvironment(
       STAKING_ADDRESS,
-      mockStakingPrecompileCode
-    ]);
-    // Must set era and bonding duration again, because the stored values are not transferred with the bytecode.
-    mockStakingPrecompile = await ethers.getContractAt(
-      "MockStakingPrecompile",
-      STAKING_ADDRESS
+      INITIAL_SUPPLY,
+      INITIAL_ERA,
+      BONDING_DURATION
     );
-    await mockStakingPrecompile.advanceEra(INITIAL_ERA);
-    await mockStakingPrecompile.setBondingDuration(BONDING_DURATION);
-
-    // Deploy ZenVault
-    const ZenVaultFactory = await ethers.getContractFactory("ZenVault");
-    zenVault = await ZenVaultFactory.deploy(owner.address, await lpToken.getAddress());
-
-    // Set up ZenVault
-    await zenVault.connect(owner).setRewardAccount(rewardAccount.address);
-    await zenVault.connect(owner).setIsStakingEnabled(true);
+    zenVault = testEnvironment.zenVault;
+    mockStakingPrecompile = testEnvironment.mockStakingPrecompile;
+    lpToken = testEnvironment.lpToken;
+    owner = testEnvironment.owner;
+    user1 = testEnvironment.user1;
+    user2 = testEnvironment.user2;
+    rewardAccount = testEnvironment.rewardAccount;
   });
 
   describe("Deployment", function () {
