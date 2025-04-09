@@ -48,15 +48,17 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     /**
      * @notice Initializes the ZenVault contract with a Uniswap V2 pair address
      * @dev Sets up the contract by:
-     *      1. Inheriting from Ownable with a null initial owner (address(0))
+     *      1. Inheriting from Ownable with an initial owner
      *      2. Initializing the Uniswap V2 pair interface that represents the pool tokens managed by this vault
      *
+     * @param owner The address of the contract admin. This must be set to address(0) in production.
      * @param pairAddress The address of the Uniswap V2 pair contract to be used as the staking token
      *                    This should be a valid IUniswapV2Pair compatible contract address
      *
-     * @custom:security-note The contract intentionally starts with the zero address as its owner.
+     * @custom:security-note The contract should intentionally start with the zero address as its owner in production.
+     *                       The owner can be set to any address for testing and development.
      */
-    constructor(address pairAddress) Ownable(address(0)) {
+    constructor(address owner, address pairAddress) Ownable(owner) {
         pool = IUniswapV2Pair(pairAddress);
     }
 
