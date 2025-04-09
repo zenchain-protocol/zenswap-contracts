@@ -349,41 +349,28 @@ describe("ZenVault", function () {
     });
 
     it("should emit VaultRewardsDistributed event", async function () {
+      // Calculate expected rewards
+      const totalStake = stakeAmount1 + stakeAmount2;
+      const expectedReward1 = rewardAmount * stakeAmount1 / totalStake;
+      const expectedReward2 = rewardAmount * stakeAmount2 / totalStake;
+
+      // call distributeRewards
       await expect(zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA))
         .to.emit(zenVault, "VaultRewardsDistributed")
-        .withArgs(INITIAL_ERA, rewardAmount);
-    });
-
-    it("should emit UserRewardsDistributed events", async function () {
-      // Distribute rewards
-      const tx = await zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA);
-      const receipt = await tx.wait();
-
-      // Check for UserRewardsDistributed events
-      const userRewardsEvents = receipt?.logs
-        .filter(log => {
-          try {
-            const parsedLog = zenVault.interface.parseLog(log);
-            return parsedLog?.name === "UserRewardsDistributed";
-          } catch (e) {
-            return false;
-          }
-        })
-        .map(log => zenVault.interface.parseLog(log));
-
-      expect(userRewardsEvents?.length).to.equal(2);
+        .withArgs(INITIAL_ERA, rewardAmount, [
+          [user1.address,
+            expectedReward1,
+          ],
+          [
+            user2.address,
+            expectedReward2,
+          ]
+        ]);
     });
 
     it("should not allow non-owners to distribute rewards", async function () {
       await expect(zenVault.connect(user1).distributeRewards(rewardAmount, INITIAL_ERA))
         .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address);
-    });
-
-    it("should not allow distributing rewards when staking is disabled", async function () {
-      await zenVault.connect(owner).setIsStakingEnabled(false);
-
-      await expect(zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA))
-        .to.be.revertedWith("Staking is not currently permitted in this ZenVault.");
     });
 
     it("should not allow distributing zero rewards", async function () {
@@ -428,29 +415,24 @@ describe("ZenVault", function () {
     });
 
     it("should emit VaultSlashed event", async function () {
+      // Calculate expected slash amounts
+      const totalStake = stakeAmount1 + stakeAmount2;
+      const expectedSlash1 = slashAmount * stakeAmount1 / totalStake;
+      const expectedSlash2 = slashAmount * stakeAmount2 / totalStake;
+
+      // call doSlash
       await expect(zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA))
         .to.emit(zenVault, "VaultSlashed")
-        .withArgs(INITIAL_ERA, slashAmount);
-    });
-
-    it("should emit UserSlashed events", async function () {
-      // Slash
-      const tx = await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
-      const receipt = await tx.wait();
-
-      // Check for UserSlashed events
-      const userSlashedEvents = receipt?.logs
-        .filter(log => {
-          try {
-            const parsedLog = zenVault.interface.parseLog(log);
-            return parsedLog?.name === "UserSlashed";
-          } catch (e) {
-            return false;
-          }
-        })
-        .map(log => zenVault.interface.parseLog(log));
-
-      expect(userSlashedEvents?.length).to.equal(2);
+        .withArgs(INITIAL_ERA, slashAmount, [
+          [
+            user1.address,
+            expectedSlash1,
+          ],
+          [
+            user2.address,
+            expectedSlash2,
+          ]
+        ]);
     });
 
     it("should not allow non-owners to slash", async function () {

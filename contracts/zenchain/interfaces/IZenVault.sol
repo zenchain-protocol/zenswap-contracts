@@ -60,39 +60,21 @@ interface IZenVault {
 
     /**
      * @notice Emitted when rewards are distributed to the vault and its stakers.
-     * @dev This event is triggered when the distributeRewards function successfully allocates rewards to the vault
-     * @param era The era for which rewards are distributed (indexed for efficient filtering)
-     * @param rewardAmount The total amount of tokens distributed as rewards
+     * @param era The era for which rewards are distributed (indexed for efficient filtering).
+     * @param rewardAmount The total amount of tokens distributed as rewards.
+     * @param userRewards An array of `UserReward` structures, where each entry represents a user's share
+     *                    of the distributed rewards, including their address and allocated amount.
      */
-    event VaultRewardsDistributed(uint32 indexed era, uint256 rewardAmount);
+    event VaultRewardsDistributed(uint32 indexed era, uint256 rewardAmount, UserReward[] userRewards);
 
     /**
-     * @notice Emitted when rewards are distributed to an individual user
-     * @dev This event is triggered for each user when rewards are calculated and allocated based on their stake
-     * @param user The address of the user receiving rewards (indexed for efficient filtering)
-     * @param era The era for which the user is receiving rewards (indexed for efficient filtering)
-     * @param rewardAmount The amount of tokens distributed to the user
+     * @notice Emitted when the vault is slashed.
+     * @param era The era in which the slash occurred (indexed for efficient filtering).
+     * @param slashAmount The total amount of tokens that were slashed from the vault.
+     * @param userSlashes An array of `UserSlash` structures, where each entry specifies a user's address
+     *                    and the amount of tokens slashed from their stake.
      */
-    event UserRewardsDistributed(address indexed user, uint32 indexed era, uint256 rewardAmount);
-
-    /**
-     * @notice Emitted when the vault is slashed
-     * @dev This event is triggered when tokens are removed from the vault due to validator misbehavior
-     *      or other slashing conditions. The slashing amount is deducted from the total stake.
-     * @param era The era in which the slash occurred (indexed for efficient filtering)
-     * @param slashAmount The total amount of tokens that were slashed from the vault
-     */
-    event VaultSlashed(uint32 indexed era, uint256 slashAmount);
-
-    /**
-     * @notice Emitted when an individual user's stake is slashed
-     * @dev This event is triggered for each user affected when a vault slash is distributed
-     *      proportionally among stakers. It provides transparency on how much each user was slashed.
-     * @param user The address of the user whose stake was slashed (indexed for efficient filtering)
-     * @param era The era in which the slash occurred (indexed for efficient filtering)
-     * @param slashAmount The amount of tokens slashed from this specific user's stake
-     */
-    event UserSlashed(address indexed user, uint32 indexed era, uint256 slashAmount);
+    event VaultSlashed(uint32 indexed era, uint256 slashAmount, UserSlash[] userSlashes);
 
     /**
      * @notice Emitted when the reward account address is updated
@@ -137,6 +119,16 @@ interface IZenVault {
          * @dev The total amount of tokens this user had staked during the specified era
          * @notice This value may differ across eras as users stake or unstake tokens
          */
+        uint256 value;
+    }
+
+    struct UserReward {
+        address staker;
+        uint256 value;
+    }
+
+    struct UserSlash {
+        address staker;
         uint256 value;
     }
 
