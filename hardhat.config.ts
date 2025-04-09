@@ -34,7 +34,7 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
-      loggingEnabled: true,
+      loggingEnabled: false,
       chainId: 31337,
     },
     zenchainTestnet: {
