@@ -62,27 +62,27 @@ interface IZenVault {
      * @notice Emitted when rewards are distributed to the vault and its stakers.
      * @dev This event is triggered when the distributeRewards function successfully allocates rewards to the vault
      * @param era The era for which rewards are distributed (indexed for efficient filtering)
-     * @param reward_amount The total amount of tokens distributed as rewards
+     * @param rewardAmount The total amount of tokens distributed as rewards
      */
-    event VaultRewardsDistributed(uint32 indexed era, uint256 reward_amount);
+    event VaultRewardsDistributed(uint32 indexed era, uint256 rewardAmount);
 
     /**
      * @notice Emitted when rewards are distributed to an individual user
      * @dev This event is triggered for each user when rewards are calculated and allocated based on their stake
      * @param user The address of the user receiving rewards (indexed for efficient filtering)
      * @param era The era for which the user is receiving rewards (indexed for efficient filtering)
-     * @param reward_amount The amount of tokens distributed to the user
+     * @param rewardAmount The amount of tokens distributed to the user
      */
-    event UserRewardsDistributed(address indexed user, uint32 indexed era, uint256 reward_amount);
+    event UserRewardsDistributed(address indexed user, uint32 indexed era, uint256 rewardAmount);
 
     /**
      * @notice Emitted when the vault is slashed
      * @dev This event is triggered when tokens are removed from the vault due to validator misbehavior
      *      or other slashing conditions. The slashing amount is deducted from the total stake.
      * @param era The era in which the slash occurred (indexed for efficient filtering)
-     * @param slash_amount The total amount of tokens that were slashed from the vault
+     * @param slashAmount The total amount of tokens that were slashed from the vault
      */
-    event VaultSlashed(uint32 indexed era, uint256 slash_amount);
+    event VaultSlashed(uint32 indexed era, uint256 slashAmount);
 
     /**
      * @notice Emitted when an individual user's stake is slashed
@@ -90,9 +90,9 @@ interface IZenVault {
      *      proportionally among stakers. It provides transparency on how much each user was slashed.
      * @param user The address of the user whose stake was slashed (indexed for efficient filtering)
      * @param era The era in which the slash occurred (indexed for efficient filtering)
-     * @param slash_amount The amount of tokens slashed from this specific user's stake
+     * @param slashAmount The amount of tokens slashed from this specific user's stake
      */
-    event UserSlashed(address indexed user, uint32 indexed era, uint256 slash_amount);
+    event UserSlashed(address indexed user, uint32 indexed era, uint256 slashAmount);
 
     /**
      * @notice Emitted when the reward account address is updated
@@ -265,18 +265,18 @@ interface IZenVault {
      * @notice Distributes rewards to stakers for a specific era
      * @dev Called by the contract owner to distribute staking rewards to the vault
      *      Triggers VaultRewardsDistributed event and calculates individual user rewards
-     * @param reward_amount The total amount of rewards to distribute
+     * @param rewardAmount The total amount of rewards to distribute
      * @param era The era for which rewards are being distributed
      */
-    function distributeRewards(uint256 reward_amount, uint32 era) external;
+    function distributeRewards(uint256 rewardAmount, uint32 era) external;
 
     /**
      * @notice Applies a slashing penalty to the vault
      * @dev Reduces staked tokens proportionally across users due to validator misbehavior
-     * @param slash_amount The total amount of tokens to slash from the vault
+     * @param slashAmount The total amount of tokens to slash from the vault
      * @param era The era in which the slashing occurred
      */
-    function doSlash(uint256 slash_amount, uint32 era) external;
+    function doSlash(uint256 slashAmount, uint32 era) external;
 
     /**
      * @notice Enables or disables token staking functionality

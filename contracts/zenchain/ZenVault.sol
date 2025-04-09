@@ -206,7 +206,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @custom:security non-reentrant - Protected against reentrancy attacks
      * @custom:security-note This function manages critical staker exposure data used for reward calculations
      */
-    function recordEraStake() external {
+    function recordEraStake() external onlyOwner {
         uint32 era = STAKING_CONTRACT.currentEra();
         require(era > lastEraUpdate, "Era exposures have been finalized for the current era.");
 
@@ -254,7 +254,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * The reward distribution uses a precision factor (1e12) to ensure accurate calculation of proportional rewards
      * even when dealing with small amounts.
      *
-     * @param reward_amount Amount of tokens to distribute as rewards (must be > 0)
+     * @param rewardAmount Amount of tokens to distribute as rewards (must be > 0)
      * @param era The specific era for which to distribute rewards
      *
      * @custom:throws "Amount must be greater than zero." - If the reward amount is 0 or negative
@@ -268,37 +268,37 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @custom:security onlyOwner - Can only be called by the contract owner
      * @custom:security-note Requires the reward tokens to be approved to this contract before distribution
      */
-    function distributeRewards(uint256 reward_amount, uint32 era) external onlyOwner {
+    function distributeRewards(uint256 rewardAmount, uint32 era) external onlyOwner {
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
-        require(reward_amount > 0, "Amount must be greater than zero.");
-        require(pool.allowance(rewardAccount, address(this)) >= reward_amount, "Not enough allowance to transfer rewards from the vault's reward account to the vault.");
+        require(rewardAmount > 0, "Amount must be greater than zero.");
+        require(pool.allowance(rewardAccount, address(this)) >= rewardAmount, "Not enough allowance to transfer rewards from the vault's reward account to the vault.");
 
         // Transfer the staking tokens from the reward account to this contract.
-        pool.transferFrom(rewardAccount, address(this), reward_amount);
+        pool.transferFrom(rewardAccount, address(this), rewardAmount);
 
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         require(_totalStakeAtEra > 0, "No stake for this era");
 
         uint256 PRECISION_FACTOR = 1e12;
-        uint256 rewardRatio = reward_amount * PRECISION_FACTOR / _totalStakeAtEra;
+        uint256 rewardRatio = rewardAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
         // Distribute rewards proportionally to stakers based on their era exposure
         EraExposure[] memory exposures = eraExposures[era];
         uint256 exposuresLength = exposures.length;
         for (uint256 i = 0; i < exposuresLength; i++) {
             EraExposure memory exposure = exposures[i];
-            uint256 user_reward = exposure.value * rewardRatio / PRECISION_FACTOR;
+            uint256 userReward = exposure.value * rewardRatio / PRECISION_FACTOR;
             address user = exposure.staker;
             // Update the user's staked balance.
             if (stakedBalances[user] == 0) {
                 stakers.push(user);
             }
-            stakedBalances[user] = stakedBalances[user] + user_reward;
-            emit UserRewardsDistributed(user, era, user_reward);
+            stakedBalances[user] = stakedBalances[user] + userReward;
+            emit UserRewardsDistributed(user, era, userReward);
         }
 
-        totalStake = totalStake + reward_amount;
-        emit VaultRewardsDistributed(era, reward_amount);
+        totalStake = totalStake + rewardAmount;
+        emit VaultRewardsDistributed(era, rewardAmount);
     }
 
     /**
@@ -312,32 +312,34 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      4. Applies the slash to each user via the internal _applySlashToUser function
      *      5. Emits a VaultSlashed event when complete
      *
-     * @param slash_amount The total amount to be slashed from the vault
+     * @param slashAmount The total amount to be slashed from the vault
      * @param era The era identifier for which the slash should be applied
      *
      * @custom:security onlyOwner - Can only be called by the contract owner
      * @custom:emits VaultSlashed - When the slashing process is complete, with the era and amount
      *
      * @notice The slashing is implemented using the formula:
-     *         user_slash = (user_stake / total_stake) * slash_amount
+     *         userSlash = (userStake / totalStake) * slashAmount
      *         This ensures proportional distribution of the penalty among all stakers
      */
-    function doSlash(uint256 slash_amount, uint32 era) external onlyOwner {
+    function doSlash(uint256 slashAmount, uint32 era) external onlyOwner {
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         require(_totalStakeAtEra > 0, "No stake for this era");
 
         uint256 PRECISION_FACTOR = 1e12;
-        uint256 slashRatio = slash_amount * PRECISION_FACTOR / _totalStakeAtEra;
+        uint256 slashRatio = slashAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
+        uint256 totalSlashed = 0;
         EraExposure[] memory exposures = eraExposures[era];
         uint256 exposuresLength = exposures.length;
         for (uint256 i = 0; i < exposuresLength; i++) {
             EraExposure memory exposure = exposures[i];
-            uint256 user_slash = exposure.value * slashRatio / PRECISION_FACTOR;
-            _applySlashToUser(user_slash, era,exposure.staker);
+            uint256 userSlash = exposure.value * slashRatio / PRECISION_FACTOR;
+            totalSlashed = totalSlashed + _applySlashToUser(userSlash, era,exposure.staker);
         }
 
-        emit VaultSlashed(era, slash_amount);
+        // totalSlashed may slightly differ from slashAmount due to precision, but that's okay.
+        emit VaultSlashed(era, totalSlashed);
     }
 
     /**
@@ -348,7 +350,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      2. If the staked balance is insufficient, it first depletes the staked balance,
      *         then continues slashing from unlocking chunks in reverse order (newest first)
      *
-     * @param slash_amount The amount to be slashed from the user
+     * @param slashAmount The amount to be slashed from the user
      * @param era The era identifier for which the slash is occurring
      * @param user The address of the user to apply the slash to
      *
@@ -356,31 +358,33 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *
      * @custom:security internal - Only callable from within the contract
      */
-    function _applySlashToUser(uint256 slash_amount, uint32 era, address user) internal {
+    function _applySlashToUser(uint256 slashAmount, uint32 era, address user) internal returns(uint256) {
+        uint256 remainingSlash = slashAmount;
         // Case 1: We can slash directly from user balance
-        if (stakedBalances[user] >= slash_amount) {
-            stakedBalances[user] = stakedBalances[user] - slash_amount;
+        if (stakedBalances[user] >= slashAmount) {
+            stakedBalances[user] = stakedBalances[user] - slashAmount;
+            remainingSlash = 0;
         // Case 2: User's balance is in the process of unlocking
         } else {
             // slash from stake balance first
-            uint256 remaining_slash = slash_amount - stakedBalances[user];
+            remainingSlash = remainingSlash - stakedBalances[user];
             stakedBalances[user] = 0;
             // slash from unlocking chunks
             UnlockChunk[] storage chunks = unlocking[user];
             for (uint256 i = chunks.length - 1; i >= 0; i--) {
                 UnlockChunk storage chunk = chunks[i];
-                if (chunk.value >= remaining_slash) {
-                    chunk.value = chunk.value - remaining_slash;
-                    remaining_slash = 0;
+                if (chunk.value >= remainingSlash) {
+                    chunk.value = chunk.value - remainingSlash;
+                    remainingSlash = 0;
                     break;
                 } else {
-                    remaining_slash = remaining_slash - chunk.value;
+                    remainingSlash = remainingSlash - chunk.value;
                     chunk.value = 0;
                 }
             }
-            // TODO: remaining slash should never be positive here. It should not be possible. But should I check if it is positive and handle it somehow?
         }
-        emit UserSlashed(user, era, slash_amount);
+        emit UserSlashed(user, era, slashAmount);
+        return slashAmount - remainingSlash;
     }
 
     /**
