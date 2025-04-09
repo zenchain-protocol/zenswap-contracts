@@ -190,11 +190,11 @@ interface IZenVault {
     /**
      * @notice Retrieves the stake exposure of a specific staker at a given era
      * @dev Returns the amount of tokens a staker had exposed (staked) during a particular era
-     * @param era The era number to query the exposure for
      * @param staker The address of the staker whose exposure is being queried
+     * @param era The era number to query the exposure for
      * @return The amount of tokens the staker had exposed during the specified era
      */
-    function stakerEraExposures(uint32 era, address staker) external view returns (uint256);
+    function stakerEraExposures(address staker, uint32 era) external view returns (uint256);
 
     /**
      * @notice Returns the current total amount of tokens staked in the vault
@@ -298,4 +298,29 @@ interface IZenVault {
      * @param _rewardAccount The new address to be set as the reward account
      */
     function setRewardAccount(address _rewardAccount) external;
+
+    /**
+     * @notice Retrieves a staker's exposure amounts across multiple eras
+     * @dev Returns an array of exposure values corresponding to each requested era
+     * @param staker The address of the staker to query exposures for
+     * @param eras An array of era indices to get the staker's exposures from
+     * @return An array of uint256 values representing the staker's exposure for each requested era
+     */
+    function getStakerExposuresForEras(address staker, uint32[] calldata eras) external view returns (uint256[] memory);
+
+    /**
+     * @notice Retrieves all staker exposures recorded for a specific era
+     * @dev Returns the full array of EraExposure structs for the specified era
+     * @param era The era index to retrieve exposure data from
+     * @return An array of EraExposure structs containing staker addresses and their exposure amounts
+     */
+    function getEraExposures(uint32 era) external view returns (EraExposure[] memory);
+
+    /**
+     * @notice Retrieves all unlocking chunks for a specific user
+     * @dev Returns the full array of UnlockChunk structs that represent tokens in the unlocking process
+     * @param user The address of the user to query unlocking chunks for
+     * @return An array of UnlockChunk structs containing information about the user's unlocking tokens
+     */
+    function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory);
 }

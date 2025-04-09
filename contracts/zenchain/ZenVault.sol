@@ -26,9 +26,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // Mapping of era index to list of staker exposures
     mapping(uint32 => EraExposure[]) public eraExposures;
 
-    // Mapping of era to staker to exposure.
+    // Mapping of staker to era to exposure.
     // This is used to track whether a staker was already processed in recordEraStake.
-    mapping(uint32 => mapping(address => uint256)) public stakerEraExposures;
+    mapping(address => mapping(uint32 => uint256)) public stakerEraExposures;
 
     // The total amount staked
     uint256 public totalStake;
@@ -219,8 +219,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         for (uint256 i = 0; i < currentStakersLength; i++) {
             address staker = stakers[i];
             uint256 stakeAmount = stakedBalances[staker];
-            if (stakeAmount > 0 && stakerEraExposures[era][staker] == 0) {
-                stakerEraExposures[era][staker] = stakeAmount;
+            if (stakeAmount > 0 && stakerEraExposures[staker][era] == 0) {
+                stakerEraExposures[staker][era] = stakeAmount;
                 // Add user to record their share of the era exposure
                 EraExposure memory exposure = EraExposure(staker, stakeAmount);
                 eraExposures[era].push(exposure);
@@ -433,5 +433,46 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     function setRewardAccount(address _rewardAccount) external onlyOwner {
         rewardAccount = _rewardAccount;
         emit RewardAccountSet(rewardAccount);
+    }
+
+    /**
+     * @notice Retrieves a staker's exposure values for multiple eras
+     * @dev Returns an array containing the staker's exposure for each requested era.
+     *      The function accesses the stakerEraExposures mapping which tracks a staker's
+     *      stake exposure for specific eras. If a staker has no exposure for a particular
+     *      era, the default value of 0 will be returned for that era.
+     *
+     * @param staker The address of the staker whose exposures are being queried
+     * @param eras An array of era indices for which to retrieve the staker's exposures
+     *
+     * @return uint256[] An array of exposure values corresponding to each requested era,
+     *                   with the same order as the input eras array
+     */
+    function getStakerExposuresForEras(address staker, uint32[] calldata eras) external view returns (uint256[] memory) {
+        uint256[] memory exposures = new uint256[](eras.length);
+        for (uint i = 0; i < eras.length; i++) {
+            exposures[i] = stakerEraExposures[staker][eras[i]];
+        }
+        return exposures;
+    }
+
+    /**
+     * @notice Retrieves all staker exposures for a specific era
+     * @dev Returns the complete array of EraExposure elements for the given era
+     * @param era The era index to retrieve exposures for
+     * @return An array of EraExposure structs containing staker addresses and their exposure values
+     */
+    function getEraExposures(uint32 era) external view returns (EraExposure[] memory) {
+        return eraExposures[era];
+    }
+
+    /**
+     * @notice Retrieves all unlocking chunks for a specific user
+     * @dev Returns the complete array of UnlockChunk elements for the given user address
+     * @param user The address of the user to retrieve unlocking chunks for
+     * @return An array of UnlockChunk structs containing the user's unlocking balances
+     */
+    function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory) {
+        return unlocking[user];
     }
 }
