@@ -72,8 +72,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *
      * @param amount The amount of tokens to stake (must be > 0)
      *
-     * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
      * @custom:throws "Staking is not currently permitted in this ZenVault." - If staking is disabled
+     * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
+     * @custom:throws "Not enough allowance to transfer tokens from the user to the vault." - If allowance is insufficient
      * @custom:throws Various errors may be thrown by the transferFrom function
      *
      * @custom:emits Staked - When tokens are successfully staked, with the staker's address and amount
@@ -82,8 +83,11 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @custom:security-note Requires approval of tokens to this contract before staking
      */
     function stake(uint256 amount) external nonReentrant {
-        require(amount > 0, "Amount must be greater than zero.");
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
+        require(amount > 0, "Amount must be greater than zero.");
+        uint256 poolAllowance = pool.allowance(msg.sender, address(this));
+        require(poolAllowance >= amount, "Not enough allowance to transfer tokens from the user to the vault.");
+
         // Transfer the staking tokens from the user to this contract.
         pool.transferFrom(msg.sender, address(this), amount);
 
@@ -258,7 +262,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @param era The specific era for which to distribute rewards
      *
      * @custom:throws "Amount must be greater than zero." - If the reward amount is 0 or negative
-     * @custom:throws "Staking is not currently permitted in this ZenVault." - If staking is disabled
+     * @custom:throws "Not enough allowance to transfer rewards from the vault's reward account to the vault." - If insufficient allowance
      * @custom:throws "No stake for this era" - If there are no stakers recorded for the specified era
      * @custom:throws Various errors may be thrown by the transferFrom function
      *
