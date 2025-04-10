@@ -83,27 +83,54 @@ export async function setupTestEnvironment(
   }
 }
 
+export async function createAndFundAccounts(
+  numAccounts: number,
+  fundingAmount: bigint
+): Promise<ethers.Wallet[]> {
+  const fundedAccounts: ethers.Wallet[] = [];
+  const owner = (await ethers.getSigners())[0];
+
+  for (let i = 0; i < numAccounts; i++) {
+    const wallet = ethers.Wallet.createRandom().connect(ethers.provider);
+    await owner.sendTransaction({
+      to: wallet.address,
+      value: fundingAmount,
+    });
+    fundedAccounts.push(wallet);
+  }
+
+  return fundedAccounts;
+}
+
 export async function setupLargeNumberOfStakers(
   numStakers: number,
   lpToken: MockToken,
   zenVault: ZenVault,
   initialSupply: bigint,
   stakeAmount: bigint
-) {
+): Promise<SignerWithAddress[]> {
   // Get additional signers for testing with many stakers
-  const allSigners = await ethers.getSigners();
-  const users = allSigners.slice(2, 2 + numStakers); // skip owner and rewardAccount
+  const hardhatSigners = await ethers.getSigners();
+  // skip owner and rewardAccount
+  let users: (SignerWithAddress | ethers.Wallet)[] = hardhatSigners.slice(2, 2 + numStakers);
+  // manually generate remaining signers
+  if (numStakers > users.length) {
+    const additionalUsers = await createAndFundAccounts(
+      numStakers - users.length,
+      ethers.parseEther("0.1")
+    );
+    users = users.concat(additionalUsers);
+  }
 
-  // Mint tokens and approve for all users
+  // Mint tokens, approve vault, and stake tokens for all users
+  const zenVaultAddress = await zenVault.getAddress();
   for (const user of users) {
     await lpToken.mint(user.address, initialSupply);
-    await lpToken.connect(user).approve(await zenVault.getAddress(), initialSupply);
-
-    // Stake tokens
+    await lpToken.connect(user).approve(zenVaultAddress, initialSupply);
     await zenVault.connect(user).stake(stakeAmount);
   }
 
-  console.log(`Setup ${users.length} stakers with ${ethers.formatEther(stakeAmount)} LP tokens each`);
+  return users;
 }
 
 export async function createMultipleUnlockingChunks(
@@ -124,6 +151,4 @@ export async function createMultipleUnlockingChunks(
   for (let i = 0; i < numChunks; i++) {
     await zenVault.connect(user).unstake(chunkSize);
   }
-
-  console.log(`Created ${numChunks} unlocking chunks for ${user.address}`);
 }
