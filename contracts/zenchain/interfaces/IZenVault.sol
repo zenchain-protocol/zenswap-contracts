@@ -170,14 +170,13 @@ interface IZenVault {
     function totalStakeAtEra(uint32 era) external view returns (uint256);
 
     /**
-     * @notice Returns exposure information for a specific era and staker index
-     * @dev Provides details about individual stakers' exposures recorded for a particular era
-     * @param era The era number to query
-     * @param index The index in the era's exposure array
-     * @return staker The address of the staker
-     * @return value The amount staked by this staker in the specified era
+     * @notice Returns the staker address for a specific era and index.
+     * @dev Provides access to the list of stakers recorded for each era.
+     * @param era The era number to query.
+     * @param index The index of the staker in the era's list.
+     * @return staker The address of the staker.
      */
-    function eraExposures(uint32 era, uint256 index) external view returns (address staker, uint256 value);
+    function eraStakers(uint32 era, uint256 index) external view returns (address staker);
 
     /**
      * @notice Retrieves the stake exposure of a specific staker at a given era
@@ -186,7 +185,7 @@ interface IZenVault {
      * @param era The era number to query the exposure for
      * @return The amount of tokens the staker had exposed during the specified era
      */
-    function stakerEraExposures(address staker, uint32 era) external view returns (uint256);
+    function stakerEraExposures(uint32 era, address staker) external view returns (uint256);
 
     /**
      * @notice Returns the current total amount of tokens staked in the vault

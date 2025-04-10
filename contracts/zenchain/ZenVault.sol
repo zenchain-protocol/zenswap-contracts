@@ -27,12 +27,12 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // Mapping of era index to total stake
     mapping(uint32 => uint256) public totalStakeAtEra;
 
-    // Mapping of era index to list of staker exposures
-    mapping(uint32 => EraExposure[]) public eraExposures;
+    // Mapping of era index to list of exposed stakers
+    mapping(uint32 => address[]) public eraStakers;
 
-    // Mapping of staker to era to exposure.
+    // Mapping of era to staker to exposure.
     // This is used to track whether a staker was already processed in recordEraStake.
-    mapping(address => mapping(uint32 => uint256)) public stakerEraExposures;
+    mapping(uint32 => mapping(address => uint256)) public stakerEraExposures;
 
     // The total amount staked
     uint256 public totalStake;
@@ -227,16 +227,12 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
         // Update era exposures
         uint256 writeIndex = 0;
-        uint256 currentStakersLength = stakers.length;
-        for (uint256 i = 0; i < currentStakersLength; i++) {
+        for (uint256 i = 0; i < stakers.length; i++) {
             address staker = stakers[i];
             uint256 stakeAmount = stakedBalances[staker];
-            if (stakeAmount > 0 && stakerEraExposures[staker][era] == 0) {
-                stakerEraExposures[staker][era] = stakeAmount;
-                // Add user to record their share of the era exposure
-                EraExposure memory exposure = EraExposure(staker, stakeAmount);
-                eraExposures[era].push(exposure);
-                // User is still staking
+            if (stakeAmount > 0 && stakerEraExposures[era][staker] == 0) {
+                stakerEraExposures[era][staker] = stakeAmount;
+                eraStakers[era].push(staker);
                 if (writeIndex != i) {
                     stakers[writeIndex] = staker;
                 }
@@ -293,13 +289,12 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
         // Distribute rewards proportionally to stakers based on their era exposure
         uint256 totalRewarded = 0;
-        EraExposure[] memory exposures = eraExposures[era];
-        uint256 exposuresLength = exposures.length;
-        UserReward[] memory allUserRewards = new UserReward[](exposuresLength);
-        for (uint256 i = 0; i < exposuresLength; i++) {
-            EraExposure memory exposure = exposures[i];
-            uint256 userReward = exposure.value * rewardRatio / PRECISION_FACTOR;
-            address user = exposure.staker;
+        address[] memory exposedStakers = eraStakers[era];
+        UserReward[] memory allUserRewards = new UserReward[](exposedStakers.length);
+        for (uint256 i = 0; i < exposedStakers.length; i++) {
+            address user = exposedStakers[i];
+            uint256 exposure = stakerEraExposures[era][user];
+            uint256 userReward = exposure * rewardRatio / PRECISION_FACTOR;
             // Update the stakers array.
             if (stakedBalances[user] == 0) {
                 stakers.push(user);
@@ -344,15 +339,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 slashRatio = slashAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
         uint256 totalSlashed = 0;
-        EraExposure[] memory exposures = eraExposures[era];
-        uint256 exposuresLength = exposures.length;
-        UserSlash[] memory allUserSlashes = new UserSlash[](exposuresLength);
-        for (uint256 i = 0; i < exposuresLength; i++) {
-            EraExposure memory exposure = exposures[i];
-            uint256 intendedUserSlash = exposure.value * slashRatio / PRECISION_FACTOR;
-            uint256 actualUserSlash = _applySlashToUser(intendedUserSlash, exposure.staker);
+        address[] memory exposedStakers = eraStakers[era];
+        UserSlash[] memory allUserSlashes = new UserSlash[](exposedStakers.length);
+        for (uint256 i = 0; i < exposedStakers.length; i++) {
+            address user = exposedStakers[i];
+            uint256 exposure = stakerEraExposures[era][user];
+            uint256 intendedUserSlash = exposure * slashRatio / PRECISION_FACTOR;
+            uint256 actualUserSlash = _applySlashToUser(intendedUserSlash, user);
             totalSlashed = totalSlashed + actualUserSlash;
-            allUserSlashes[i] = UserSlash(exposure.staker, actualUserSlash);
+            allUserSlashes[i] = UserSlash(user, actualUserSlash);
         }
 
         // totalSlashed may slightly differ from slashAmount due to precision, but that's okay.
@@ -471,7 +466,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     function getStakerExposuresForEras(address staker, uint32[] calldata eras) external view returns (uint256[] memory) {
         uint256[] memory exposures = new uint256[](eras.length);
         for (uint i = 0; i < eras.length; i++) {
-            exposures[i] = stakerEraExposures[staker][eras[i]];
+            exposures[i] = stakerEraExposures[eras[i]][staker];
         }
         return exposures;
     }
@@ -483,7 +478,12 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @return An array of EraExposure structs containing staker addresses and their exposure values
      */
     function getEraExposures(uint32 era) external view returns (EraExposure[] memory) {
-        return eraExposures[era];
+        address[] memory users = eraStakers[era];
+        EraExposure[] memory exposures = new EraExposure[](users.length);
+        for (uint i = 0; i < users.length; i++) {
+            exposures[i] = EraExposure(users[i], stakerEraExposures[era][users[i]]);
+        }
+        return exposures;
     }
 
     /**
