@@ -13,6 +13,7 @@ describe("ZenVault Gas Tests", function () {
   // Signers
   let owner: SignerWithAddress;
   let rewardAccount: SignerWithAddress;
+  let user1: SignerWithAddress;
 
   // Constants
   const STAKING_ADDRESS = "0x0000000000000000000000000000000000000800";
@@ -35,9 +36,33 @@ describe("ZenVault Gas Tests", function () {
     lpToken = testEnvironment.lpToken;
     owner = testEnvironment.owner;
     rewardAccount = testEnvironment.rewardAccount;
+    user1 = testEnvironment.user1;
 
     // Approve rewards
     await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
+  });
+
+  it("should test gas costs for stake", async function () {
+    await lpToken.mint(user1.address, INITIAL_SUPPLY);
+    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
+
+    // Measure gas used for stake
+    const tx = await zenVault.connect(user1).stake(STAKE_AMOUNT);
+    const receipt = await tx.wait();
+
+    console.log(`Gas used for stake: ${receipt?.gasUsed}`);
+  });
+
+  it("should test gas costs for unstake", async function () {
+    await lpToken.mint(user1.address, INITIAL_SUPPLY);
+    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
+    await zenVault.connect(user1).stake(STAKE_AMOUNT);
+
+    // Measure gas used for stake
+    const tx = await zenVault.connect(user1).unstake(STAKE_AMOUNT);
+    const receipt = await tx.wait();
+
+    console.log(`Gas used for unstake: ${receipt?.gasUsed}`);
   });
 
   it("should test gas costs with a large number of stakers for recordEraStake", async function () {

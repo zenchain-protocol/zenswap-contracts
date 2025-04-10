@@ -83,6 +83,13 @@ export async function setupTestEnvironment(
   }
 }
 
+/**
+ * Creates and funds multiple random Ethereum wallets
+ *
+ * @param numAccounts - The number of random wallets to create
+ * @param fundingAmount - The amount of native currency to send to each wallet
+ * @returns An array of funded Ethereum wallets connected to the provider
+ */
 export async function createAndFundAccounts(
   numAccounts: number,
   fundingAmount: bigint
@@ -102,6 +109,20 @@ export async function createAndFundAccounts(
   return fundedAccounts;
 }
 
+/**
+ * Sets up multiple stakers for testing the ZenVault contract.
+ *
+ * This function creates the requested number of user accounts, mints LP tokens to each account,
+ * approves the ZenVault contract to spend these tokens, and then performs a stake operation
+ * for each user.
+ *
+ * @param numStakers - The number of staker accounts to set up
+ * @param lpToken - The MockToken contract instance representing LP tokens
+ * @param zenVault - The ZenVault contract instance where tokens will be staked
+ * @param initialSupply - The amount of LP tokens to mint to each account
+ * @param stakeAmount - The amount of LP tokens each account will stake
+ * @returns An array of SignerWithAddress objects representing the staker accounts
+ */
 export async function setupLargeNumberOfStakers(
   numStakers: number,
   lpToken: MockToken,
@@ -133,6 +154,21 @@ export async function setupLargeNumberOfStakers(
   return users;
 }
 
+/**
+ * Creates multiple unlocking chunks for a user in the ZenVault contract
+ *
+ * This helper function stakes a specified amount of tokens and then divides it into
+ * multiple equal-sized unstaking operations. It's useful for testing scenarios that
+ * involve multiple unlocking chunks in progress simultaneously.
+ *
+ * @param user - The user account that will stake and create unlocking chunks
+ * @param numChunks - The number of separate unlocking chunks to create
+ * @param lpToken - The LP token contract to be staked
+ * @param zenVault - The ZenVault contract instance
+ * @param stakeAmount - The total amount to stake before creating unlocking chunks
+ *
+ * @remarks Each unlocking chunk will have a size of stakeAmount/numChunks
+ */
 export async function createMultipleUnlockingChunks(
   user: SignerWithAddress,
   numChunks: number,
@@ -143,8 +179,8 @@ export async function createMultipleUnlockingChunks(
   const chunkSize = stakeAmount / BigInt(numChunks);
 
   // Stake a large amount first
-  await lpToken.mint(user.address, stakeAmount * 2n);
-  await lpToken.connect(user).approve(await zenVault.getAddress(), stakeAmount * 2n);
+  await lpToken.mint(user.address, stakeAmount);
+  await lpToken.connect(user).approve(await zenVault.getAddress(), stakeAmount);
   await zenVault.connect(user).stake(stakeAmount);
 
   // Create multiple unlocking chunks

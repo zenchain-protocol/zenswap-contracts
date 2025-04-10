@@ -137,6 +137,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         UnlockChunk memory chunk = UnlockChunk(amount, currentEra + bondingDuration);
         unlocking[msg.sender].push(chunk);
 
+        // remove staker if fully unstaked
+        maybeRemoveFromStakers(msg.sender);
+
         emit Unstaked(msg.sender, amount);
     }
 
@@ -348,6 +351,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             uint256 actualUserSlash = _applySlashToUser(intendedUserSlash, user);
             totalSlashed = totalSlashed + actualUserSlash;
             allUserSlashes[i] = UserSlash(user, actualUserSlash);
+            // cleanup: remove staker if fully unstaked
+            maybeRemoveFromStakers(user);
         }
 
         // totalSlashed may slightly differ from slashAmount due to precision, but that's okay.
@@ -380,16 +385,14 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             stakedBalances[user] = 0;
             // slash from unlocking chunks
             UnlockChunk[] storage chunks = unlocking[user];
-            uint256 chunksLen = chunks.length;
-            for (uint256 i = 0; i < chunksLen; i++) {
-                UnlockChunk storage chunk = chunks[i];
-                if (chunk.value >= remainingSlash) {
-                    chunk.value = chunk.value - remainingSlash;
+            while (chunks.length > 0 && remainingSlash > 0) {
+                UnlockChunk storage chunk = chunks[chunks.length - 1];
+                if (chunk.value > remainingSlash) {
+                    chunk.value -= remainingSlash;
                     remainingSlash = 0;
-                    break;
                 } else {
-                    remainingSlash = remainingSlash - chunk.value;
-                    chunk.value = 0;
+                    remainingSlash -= chunk.value;
+                    chunks.pop();
                 }
             }
         }
@@ -494,5 +497,19 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory) {
         return unlocking[user];
+    }
+
+    // remove a staker if fully unstaked
+    function maybeRemoveFromStakers(address user) internal {
+        if (stakedBalances[user] == 0) {
+            for (uint256 i = 0; i < stakers.length; i++) {
+                if (stakers[i] == user) {
+                    stakers[i] = stakers[stakers.length - 1];
+                    // It's okay to modify the array here because we are breaking from the loop
+                    stakers.pop();
+                    break;
+                }
+            }
+        }
     }
 }
