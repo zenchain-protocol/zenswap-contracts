@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import {setupTestEnvironment} from "./utils";
+import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 
 describe("ZenVault", function () {
   // Contracts
@@ -53,10 +53,6 @@ describe("ZenVault", function () {
 
     it("should set the correct reward account", async function () {
       expect(await zenVault.rewardAccount()).to.equal(rewardAccount.address);
-    });
-
-    it("should enable staking by default", async function () {
-      expect(await zenVault.isStakingEnabled()).to.equal(true);
     });
 
     it("should enable withdrawals by default", async function () {
@@ -152,6 +148,11 @@ describe("ZenVault", function () {
       await expect(zenVault.connect(user1).unstake(0))
         .to.be.revertedWith("Amount must be greater than zero.");
     });
+
+    it("should not allow withdrawing before unstaking", async function () {
+      await expect(zenVault.connect(user1).withdrawUnlocked())
+        .to.be.revertedWith("No unlocking chunks found for caller.");
+    });
   });
 
   describe("Withdrawing Unlocked Tokens", function () {
@@ -175,6 +176,10 @@ describe("ZenVault", function () {
       const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(1);
       expect(unlockingChunks[0].value).to.equal(unstakeAmount);
+    });
+
+    it("should not emit event if no tokens are withdrawn", async function () {
+      await expect(zenVault.connect(user1).withdrawUnlocked()).not.to.emit(zenVault, "Withdrawal");
     });
 
     it("should allow withdrawing after bonding period ends", async function () {
@@ -306,8 +311,9 @@ describe("ZenVault", function () {
 
       // Calculate expected rewards
       const totalStake = stakeAmount1 + stakeAmount2;
-      const expectedReward1 = rewardAmount * stakeAmount1 / totalStake;
-      const expectedReward2 = rewardAmount * stakeAmount2 / totalStake;
+      const rewardRatio = rewardAmount * PRECISION_FACTOR/ totalStake;
+      const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
+      const expectedReward2 = (rewardRatio * stakeAmount2) / PRECISION_FACTOR;
 
       // Check that rewards were distributed correctly
       expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount1 + expectedReward1);
@@ -318,14 +324,16 @@ describe("ZenVault", function () {
     it("should emit VaultRewardsDistributed event", async function () {
       // Calculate expected rewards
       const totalStake = stakeAmount1 + stakeAmount2;
-      const expectedReward1 = rewardAmount * stakeAmount1 / totalStake;
-      const expectedReward2 = rewardAmount * stakeAmount2 / totalStake;
+      const rewardRatio = rewardAmount * PRECISION_FACTOR/ totalStake;
+      const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
+      const expectedReward2 = (rewardRatio * stakeAmount2) / PRECISION_FACTOR;
 
       // call distributeRewards
       await expect(zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA))
         .to.emit(zenVault, "VaultRewardsDistributed")
         .withArgs(INITIAL_ERA, rewardAmount, [
-          [user1.address,
+          [
+            user1.address,
             expectedReward1,
           ],
           [
@@ -373,8 +381,9 @@ describe("ZenVault", function () {
 
       // Calculate expected slash amounts
       const totalStake = stakeAmount1 + stakeAmount2;
-      const expectedSlash1 = slashAmount * stakeAmount1 / totalStake;
-      const expectedSlash2 = slashAmount * stakeAmount2 / totalStake;
+      const slashRatio = slashAmount * PRECISION_FACTOR / totalStake;
+      const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
+      const expectedSlash2 = (slashRatio * stakeAmount2) / PRECISION_FACTOR;
 
       // Check that stakers were slashed correctly
       expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount1 - expectedSlash1);
@@ -384,8 +393,9 @@ describe("ZenVault", function () {
     it("should emit VaultSlashed event", async function () {
       // Calculate expected slash amounts
       const totalStake = stakeAmount1 + stakeAmount2;
-      const expectedSlash1 = slashAmount * stakeAmount1 / totalStake;
-      const expectedSlash2 = slashAmount * stakeAmount2 / totalStake;
+      const slashRatio = slashAmount * PRECISION_FACTOR / totalStake;
+      const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
+      const expectedSlash2 = (slashRatio * stakeAmount2) / PRECISION_FACTOR;
 
       // call doSlash
       await expect(zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA))
@@ -421,7 +431,8 @@ describe("ZenVault", function () {
 
       // Calculate expected slash amount for user1
       const totalStake = stakeAmount1 + stakeAmount2;
-      const expectedSlash1 = slashAmount * stakeAmount1 / totalStake;
+      const slashRatio = slashAmount * PRECISION_FACTOR / totalStake;
+      const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
 
       // Check that unlocking chunks were slashed
       const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);

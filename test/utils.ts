@@ -2,6 +2,8 @@ import {ethers} from "hardhat";
 import {MockStakingPrecompile, MockToken, ZenVault} from "../typechain-types";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
 
+export const PRECISION_FACTOR = BigInt(1e18);
+
 export interface TestEnvironment {
   // Contracts
   zenVault: ZenVault;

@@ -7,6 +7,8 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
+// TODO: clear old data periodically to save storage space?
+
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     uint256 constant public PRECISION_FACTOR = 1e18;
 
@@ -153,7 +155,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * If no tokens are eligible for withdrawal, the function completes without transferring
      * any tokens but still emits an event with a zero amount.
      *
-     * @custom:emits Withdrawal - When the function completes, with the caller's address and
+     * @custom:emits Withdrawal - If tokens are withdrawn, with the caller's address and
      *                            the total amount withdrawn (may be zero)
      *
      * @custom:security-note No reentrancy protection is applied, as the state is fully updated
@@ -162,8 +164,11 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function withdrawUnlocked() external nonReentrant {
         require(isWithdrawEnabled, "Withdrawals are temporarily disabled.");
-        uint32 currentEra = STAKING_CONTRACT.currentEra();
+
         UnlockChunk[] storage chunks = unlocking[msg.sender];
+        require(chunks.length > 0, "No unlocking chunks found for caller.");
+
+        uint32 currentEra = STAKING_CONTRACT.currentEra();
         uint256 writeIndex = 0;
         uint256 totalToTransfer = 0;
 
@@ -190,9 +195,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         // Transfer unlocked tokens to the caller, if any
         if (totalToTransfer > 0) {
             pool.transfer(msg.sender, totalToTransfer);
+            emit Withdrawal(msg.sender, totalToTransfer);
         }
-
-        emit Withdrawal(msg.sender, totalToTransfer);
     }
 
     /**
@@ -275,14 +279,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function distributeRewards(uint256 rewardAmount, uint32 era) external onlyOwner {
         require(rewardAmount > 0, "Amount must be greater than zero.");
+
         uint256 poolAllowance = pool.allowance(rewardAccount, address(this));
         require(poolAllowance >= rewardAmount, "Not enough allowance to transfer rewards from the vault's reward account to the vault.");
 
-        // Transfer the staking tokens from the reward account to this contract.
-        pool.transferFrom(rewardAccount, address(this), rewardAmount);
-
         uint256 _totalStakeAtEra = totalStakeAtEra[era];
         require(_totalStakeAtEra > 0, "No stake for this era");
+
+        // Transfer the staking tokens from the reward account to this contract.
+        pool.transferFrom(rewardAccount, address(this), rewardAmount);
 
         uint256 rewardRatio = rewardAmount * PRECISION_FACTOR / _totalStakeAtEra;
 

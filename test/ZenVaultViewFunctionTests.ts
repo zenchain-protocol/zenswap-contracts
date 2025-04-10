@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
 import {setupTestEnvironment} from "./utils";
+import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("ZenVault View Function Tests", function () {
   // Contracts
@@ -9,11 +10,17 @@ describe("ZenVault View Function Tests", function () {
   let mockStakingPrecompile: MockStakingPrecompile;
   let lpToken: MockToken;
 
+  // Signers
+  let user1: SignerWithAddress;
+  let user2: SignerWithAddress;
+
   // Constants
   const STAKING_ADDRESS = "0x0000000000000000000000000000000000000800";
   const INITIAL_SUPPLY = ethers.parseEther("1000000");
   const INITIAL_ERA = 1;
   const BONDING_DURATION = 2;
+  const stakeAmount1 = ethers.parseEther("100");
+  const stakeAmount2 = ethers.parseEther("200");
 
   beforeEach(async function () {
     const testEnvironment = await setupTestEnvironment(
@@ -25,12 +32,8 @@ describe("ZenVault View Function Tests", function () {
     zenVault = testEnvironment.zenVault;
     mockStakingPrecompile = testEnvironment.mockStakingPrecompile;
     lpToken = testEnvironment.lpToken;
-  });
-
-  it("getStakerExposuresForEras should return correct data", async function () {
-    // Setup stakers
-    const user1 = (await ethers.getSigners())[2];
-    const user2 = (await ethers.getSigners())[3];
+    user1 = testEnvironment.user1;
+    user2 = testEnvironment.user2;
 
     // Mint and approve tokens
     await lpToken.mint(user1.address, INITIAL_SUPPLY);
@@ -39,14 +42,14 @@ describe("ZenVault View Function Tests", function () {
     await lpToken.connect(user2).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
 
     // Stake tokens
-    const stakeAmount1 = ethers.parseEther("100");
-    const stakeAmount2 = ethers.parseEther("200");
     await zenVault.connect(user1).stake(stakeAmount1);
     await zenVault.connect(user2).stake(stakeAmount2);
 
-    // Record era stake for era 1
+    // Record era stake
     await zenVault.recordEraStake();
+  });
 
+  it("getStakerExposuresForEras should return correct data", async function () {
     // Advance to era 2 and record again
     await mockStakingPrecompile.advanceEra(1);
     await zenVault.recordEraStake();
@@ -59,25 +62,6 @@ describe("ZenVault View Function Tests", function () {
   });
 
   it("getEraExposures should return correct data", async function () {
-    // Setup stakers
-    const user1 = (await ethers.getSigners())[2];
-    const user2 = (await ethers.getSigners())[3];
-
-    // Mint and approve tokens
-    await lpToken.mint(user1.address, INITIAL_SUPPLY);
-    await lpToken.mint(user2.address, INITIAL_SUPPLY);
-    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-    await lpToken.connect(user2).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-
-    // Stake tokens
-    const stakeAmount1 = ethers.parseEther("100");
-    const stakeAmount2 = ethers.parseEther("200");
-    await zenVault.connect(user1).stake(stakeAmount1);
-    await zenVault.connect(user2).stake(stakeAmount2);
-
-    // Record era stake
-    await zenVault.recordEraStake();
-
     // Verify getEraExposures returns correct data
     const eraExposures = await zenVault.getEraExposures(INITIAL_ERA);
     expect(eraExposures.length).to.equal(2);
@@ -95,25 +79,14 @@ describe("ZenVault View Function Tests", function () {
   });
 
   it("getUserUnlockingChunks should return correct data", async function () {
-    // Setup staker
-    const user = (await ethers.getSigners())[2];
-
-    // Mint and approve tokens
-    await lpToken.mint(user.address, INITIAL_SUPPLY);
-    await lpToken.connect(user).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-
-    // Stake tokens
-    const stakeAmount = ethers.parseEther("100");
-    await zenVault.connect(user).stake(stakeAmount);
-
     // Create multiple unlocking chunks
     const chunk1 = ethers.parseEther("20");
     const chunk2 = ethers.parseEther("30");
-    await zenVault.connect(user).unstake(chunk1);
-    await zenVault.connect(user).unstake(chunk2);
+    await zenVault.connect(user1).unstake(chunk1);
+    await zenVault.connect(user1).unstake(chunk2);
 
     // Verify getUserUnlockingChunks returns correct data
-    const unlockingChunks = await zenVault.getUserUnlockingChunks(user.address);
+    const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(2);
     expect(unlockingChunks[0].value).to.equal(chunk1);
     expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);

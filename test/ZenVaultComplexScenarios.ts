@@ -2,7 +2,7 @@ import {expect} from "chai";
 import {ethers} from "hardhat";
 import {MockStakingPrecompile, MockToken, ZenVault} from "../typechain-types";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
-import {setupTestEnvironment} from "./utils";
+import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 
 describe("ZenVault Complex Scenarios", function () {
   // Contracts
@@ -13,6 +13,8 @@ describe("ZenVault Complex Scenarios", function () {
   // Signers
   let owner: SignerWithAddress;
   let rewardAccount: SignerWithAddress;
+  let user1: SignerWithAddress;
+  let user2: SignerWithAddress;
 
   // Constants
   const STAKING_ADDRESS = "0x0000000000000000000000000000000000000800";
@@ -21,7 +23,8 @@ describe("ZenVault Complex Scenarios", function () {
   const BONDING_DURATION = 2;
   const REWARD_AMOUNT = ethers.parseEther("30");
   const SLASH_AMOUNT = ethers.parseEther("20");
-  const PRECISION_FACTOR = BigInt(1e18);
+  const stakeAmount1 = ethers.parseEther("100");
+  const stakeAmount2 = ethers.parseEther("200");
 
   beforeEach(async function () {
     const testEnvironment = await setupTestEnvironment(
@@ -35,15 +38,11 @@ describe("ZenVault Complex Scenarios", function () {
     lpToken = testEnvironment.lpToken;
     owner = testEnvironment.owner;
     rewardAccount = testEnvironment.rewardAccount;
+    user1 = testEnvironment.user1;
+    user2 = testEnvironment.user2;
 
     // Approve rewards
     await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-  });
-
-  it("should distribute rewards correctly for an era after slashing occurred for that same era", async function () {
-    // Setup stakers
-    const user1 = (await ethers.getSigners())[2];
-    const user2 = (await ethers.getSigners())[3];
 
     // Mint and approve tokens
     await lpToken.mint(user1.address, INITIAL_SUPPLY);
@@ -52,14 +51,14 @@ describe("ZenVault Complex Scenarios", function () {
     await lpToken.connect(user2).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
 
     // Stake tokens
-    const stakeAmount1 = ethers.parseEther("100");
-    const stakeAmount2 = ethers.parseEther("200");
     await zenVault.connect(user1).stake(stakeAmount1);
     await zenVault.connect(user2).stake(stakeAmount2);
 
     // Record era stake
     await zenVault.recordEraStake();
+  });
 
+  it("should distribute rewards correctly for an era after slashing occurred for that same era", async function () {
     // Do slash first
     await zenVault.connect(owner).doSlash(SLASH_AMOUNT, INITIAL_ERA);
 
@@ -91,25 +90,6 @@ describe("ZenVault Complex Scenarios", function () {
   });
 
   it("should slash correctly for an era after rewards were distributed for that same era", async function () {
-    // Setup stakers
-    const user1 = (await ethers.getSigners())[2];
-    const user2 = (await ethers.getSigners())[3];
-
-    // Mint and approve tokens
-    await lpToken.mint(user1.address, INITIAL_SUPPLY);
-    await lpToken.mint(user2.address, INITIAL_SUPPLY);
-    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-    await lpToken.connect(user2).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-
-    // Stake tokens
-    const stakeAmount1 = ethers.parseEther("100");
-    const stakeAmount2 = ethers.parseEther("200");
-    await zenVault.connect(user1).stake(stakeAmount1);
-    await zenVault.connect(user2).stake(stakeAmount2);
-
-    // Record era stake
-    await zenVault.recordEraStake();
-
     // Distribute rewards first
     await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT, INITIAL_ERA);
 
@@ -140,39 +120,27 @@ describe("ZenVault Complex Scenarios", function () {
     );
   });
 
-  it("should handle staking -> record -> reward -> unstake -> wait -> withdraw (verify rewarded amount is withdrawable)", async function () {
-    // Setup staker
-    const user = (await ethers.getSigners())[2];
-
-    // Mint and approve tokens
-    await lpToken.mint(user.address, INITIAL_SUPPLY);
-    await lpToken.connect(user).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-
-    // Stake tokens
-    const stakeAmount = ethers.parseEther("100");
-    await zenVault.connect(user).stake(stakeAmount);
-
-    // Record era stake
-    await zenVault.recordEraStake();
-
+  it("verify rewarded amount is withdrawable", async function () {
     // Distribute rewards
     await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT, INITIAL_ERA);
 
     // Calculate expected reward
-    const expectedReward = REWARD_AMOUNT; // Only one staker, so they get all rewards
+    const totalStake = stakeAmount1 + stakeAmount2;
+    const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
 
     // Verify reward was added to staked balance
-    expect(await zenVault.stakedBalances(user.address)).to.equal(stakeAmount + expectedReward);
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount1 + expectedReward1);
 
     // Unstake all tokens (including rewards)
-    const totalStaked = stakeAmount + expectedReward;
-    await zenVault.connect(user).unstake(totalStaked);
+    const totalStaked = stakeAmount1 + expectedReward1;
+    await zenVault.connect(user1).unstake(totalStaked);
 
     // Verify staked balance is now zero
-    expect(await zenVault.stakedBalances(user.address)).to.equal(0);
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
 
     // Verify unlocking chunk contains the full amount
-    const unlockingChunks = await zenVault.getUserUnlockingChunks(user.address);
+    const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(1);
     expect(unlockingChunks[0].value).to.equal(totalStaked);
 
@@ -180,48 +148,37 @@ describe("ZenVault Complex Scenarios", function () {
     await mockStakingPrecompile.advanceEra(BONDING_DURATION + 1);
 
     // Get initial LP token balance
-    const initialBalance = await lpToken.balanceOf(user.address);
+    const initialBalance = await lpToken.balanceOf(user1.address);
 
     // Withdraw unlocked tokens
-    await zenVault.connect(user).withdrawUnlocked();
+    await zenVault.connect(user1).withdrawUnlocked();
 
     // Verify the full amount (including rewards) was withdrawn
-    const finalBalance = await lpToken.balanceOf(user.address);
+    const finalBalance = await lpToken.balanceOf(user1.address);
     expect(finalBalance - initialBalance).to.equal(totalStaked);
   });
 
-  it("should handle staking -> record -> slash -> unstake (verify less amount unstaked) -> wait -> withdraw", async function () {
-    // Setup staker
-    const user = (await ethers.getSigners())[2];
-
-    // Mint and approve tokens
-    await lpToken.mint(user.address, INITIAL_SUPPLY);
-    await lpToken.connect(user).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-
-    // Stake tokens
-    const stakeAmount = ethers.parseEther("100");
-    await zenVault.connect(user).stake(stakeAmount);
-
-    // Record era stake
-    await zenVault.recordEraStake();
-
+  it("should handle unstake and withdraw after slash", async function () {
     // Apply slash
     await zenVault.connect(owner).doSlash(SLASH_AMOUNT, INITIAL_ERA);
 
     // Calculate expected remaining amount after slash
-    const expectedRemaining = stakeAmount - SLASH_AMOUNT;
+    const totalStake = stakeAmount1 + stakeAmount2;
+    const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
+    const expectedRemaining = stakeAmount1 - expectedSlash1;
 
     // Verify staked balance was reduced by slash amount
-    expect(await zenVault.stakedBalances(user.address)).to.equal(expectedRemaining);
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(expectedRemaining);
 
     // Unstake all remaining tokens
-    await zenVault.connect(user).unstake(expectedRemaining);
+    await zenVault.connect(user1).unstake(expectedRemaining);
 
     // Verify staked balance is now zero
-    expect(await zenVault.stakedBalances(user.address)).to.equal(0);
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
 
     // Verify unlocking chunk contains the reduced amount
-    const unlockingChunks = await zenVault.getUserUnlockingChunks(user.address);
+    const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(1);
     expect(unlockingChunks[0].value).to.equal(expectedRemaining);
 
@@ -229,47 +186,36 @@ describe("ZenVault Complex Scenarios", function () {
     await mockStakingPrecompile.advanceEra(BONDING_DURATION + 1);
 
     // Get initial LP token balance
-    const initialBalance = await lpToken.balanceOf(user.address);
+    const initialBalance = await lpToken.balanceOf(user1.address);
 
     // Withdraw unlocked tokens
-    await zenVault.connect(user).withdrawUnlocked();
+    await zenVault.connect(user1).withdrawUnlocked();
 
     // Verify the reduced amount was withdrawn
-    const finalBalance = await lpToken.balanceOf(user.address);
+    const finalBalance = await lpToken.balanceOf(user1.address);
     expect(finalBalance - initialBalance).to.equal(expectedRemaining);
   });
 
   it("should handle slashing from unlocking chunks that were created after rewards were added", async function () {
-    // Setup staker
-    const user = (await ethers.getSigners())[2];
-
-    // Mint and approve tokens
-    await lpToken.mint(user.address, INITIAL_SUPPLY);
-    await lpToken.connect(user).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-
-    // Stake tokens
-    const stakeAmount = ethers.parseEther("100");
-    await zenVault.connect(user).stake(stakeAmount);
-
-    // Record era stake
-    await zenVault.recordEraStake();
-
     // Distribute rewards
     await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT, INITIAL_ERA);
 
     // Verify reward was added to staked balance
-    const totalStaked = stakeAmount + REWARD_AMOUNT;
-    expect(await zenVault.stakedBalances(user.address)).to.equal(totalStaked);
+    const totalStake = stakeAmount1 + stakeAmount2;
+    const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
+    const totalUserStake = stakeAmount1 + expectedReward1;
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(totalUserStake);
 
     // Unstake half of the tokens (creating an unlocking chunk)
-    const unstakeAmount = totalStaked / 2n;
-    await zenVault.connect(user).unstake(unstakeAmount);
+    const unstakeAmount = totalUserStake / 2n;
+    await zenVault.connect(user1).unstake(unstakeAmount);
 
     // Verify staked balance is reduced
-    expect(await zenVault.stakedBalances(user.address)).to.equal(totalStaked - unstakeAmount);
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(totalUserStake - unstakeAmount);
 
     // Verify unlocking chunk
-    let unlockingChunks = await zenVault.getUserUnlockingChunks(user.address);
+    let unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(1);
     expect(unlockingChunks[0].value).to.equal(unstakeAmount);
 
@@ -280,25 +226,25 @@ describe("ZenVault Complex Scenarios", function () {
     // Apply slash to the new era
     const bigSlashAmount = SLASH_AMOUNT * 3n; // 30 * 3 = 90
     await zenVault.connect(owner).doSlash(bigSlashAmount, INITIAL_ERA + 1);
-    const slashRatio = bigSlashAmount * PRECISION_FACTOR / totalStaked;
-    const userSlash = slashRatio * totalStaked / PRECISION_FACTOR;
+    const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
 
     // Verify staked balance was reduced to zero
     // Since there's only one staker, they get the full slash
     // The slash should be applied first to the staked balance and then to unlocking amounts
 
     // Calculate how much should be slashed from each portion
-    const stakedPortion = totalStaked - unstakeAmount;
+    const stakedPortion = totalUserStake - unstakeAmount;
     const unlockingPortion = unstakeAmount;
 
-    const slashFromStaked = stakedPortion >= userSlash ? userSlash : stakedPortion;
-    const slashFromUnlocking = stakedPortion >= userSlash ? 0n : userSlash - stakedPortion;
+    const slashFromStaked = stakedPortion >= expectedSlash1 ? expectedSlash1 : stakedPortion;
+    const slashFromUnlocking = stakedPortion >= expectedSlash1 ? 0n : expectedSlash1 - stakedPortion;
 
     // Verify staked balance after slash
-    expect(await zenVault.stakedBalances(user.address)).to.equal(stakedPortion - slashFromStaked);
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(stakedPortion - slashFromStaked);
 
     // Verify unlocking chunk was slashed
-    unlockingChunks = await zenVault.getUserUnlockingChunks(user.address);
+    unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
     expect(unlockingChunks[0].value).to.equal(unlockingPortion - slashFromUnlocking);
   });
 
