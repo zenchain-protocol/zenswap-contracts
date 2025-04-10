@@ -201,14 +201,14 @@ describe("ZenVault Complex Scenarios", function () {
     await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT, INITIAL_ERA);
 
     // Verify reward was added to staked balance
-    const totalStake = stakeAmount1 + stakeAmount2;
-    const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+    const initialTotalStake = stakeAmount1 + stakeAmount2;
+    const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / initialTotalStake;
     const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
-    const totalUserStake = stakeAmount1 + expectedReward1;
+    const totalUserStake = stakeAmount1 + expectedReward1; // 100 + 10 = 110
     expect(await zenVault.stakedBalances(user1.address)).to.equal(totalUserStake);
 
     // Unstake half of the tokens (creating an unlocking chunk)
-    const unstakeAmount = totalUserStake / 2n;
+    const unstakeAmount = totalUserStake / 2n; // 55
     await zenVault.connect(user1).unstake(unstakeAmount);
 
     // Verify staked balance is reduced
@@ -224,13 +224,12 @@ describe("ZenVault Complex Scenarios", function () {
     await zenVault.recordEraStake();
 
     // Apply slash to the new era
-    const bigSlashAmount = SLASH_AMOUNT * 3n; // 30 * 3 = 90
-    await zenVault.connect(owner).doSlash(bigSlashAmount, INITIAL_ERA + 1);
-    const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+    const bigSlashAmount = SLASH_AMOUNT * 12n; // 20 * 12 = 240
+    await zenVault.connect(owner).doSlash(bigSlashAmount, INITIAL_ERA);
+    const slashRatio = bigSlashAmount * PRECISION_FACTOR / initialTotalStake;
     const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
 
     // Verify staked balance was reduced to zero
-    // Since there's only one staker, they get the full slash
     // The slash should be applied first to the staked balance and then to unlocking amounts
 
     // Calculate how much should be slashed from each portion
