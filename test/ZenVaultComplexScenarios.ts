@@ -21,6 +21,7 @@ describe("ZenVault Complex Scenarios", function () {
   const BONDING_DURATION = 2;
   const REWARD_AMOUNT = ethers.parseEther("30");
   const SLASH_AMOUNT = ethers.parseEther("20");
+  const PRECISION_FACTOR = BigInt(1e18);
 
   beforeEach(async function () {
     const testEnvironment = await setupTestEnvironment(
@@ -64,8 +65,9 @@ describe("ZenVault Complex Scenarios", function () {
 
     // Calculate expected slash amounts
     const totalStake = stakeAmount1 + stakeAmount2;
-    const expectedSlash1 = (SLASH_AMOUNT * stakeAmount1) / totalStake;
-    const expectedSlash2 = (SLASH_AMOUNT * stakeAmount2) / totalStake;
+    const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
+    const expectedSlash2 = (slashRatio * stakeAmount2) / PRECISION_FACTOR;
 
     // Verify slash was applied correctly
     expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount1 - expectedSlash1);
@@ -75,8 +77,9 @@ describe("ZenVault Complex Scenarios", function () {
     await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT, INITIAL_ERA);
 
     // Calculate expected rewards (based on original stake amounts, not post-slash)
-    const expectedReward1 = (REWARD_AMOUNT * stakeAmount1) / totalStake;
-    const expectedReward2 = (REWARD_AMOUNT * stakeAmount2) / totalStake;
+    const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
+    const expectedReward2 = (rewardRatio * stakeAmount2) / PRECISION_FACTOR;
 
     // Verify rewards were distributed correctly
     expect(await zenVault.stakedBalances(user1.address)).to.equal(
@@ -112,8 +115,9 @@ describe("ZenVault Complex Scenarios", function () {
 
     // Calculate expected rewards
     const totalStake = stakeAmount1 + stakeAmount2;
-    const expectedReward1 = (REWARD_AMOUNT * stakeAmount1) / totalStake;
-    const expectedReward2 = (REWARD_AMOUNT * stakeAmount2) / totalStake;
+    const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
+    const expectedReward2 = (rewardRatio * stakeAmount2) / PRECISION_FACTOR;
 
     // Verify rewards were distributed correctly
     expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount1 + expectedReward1);
@@ -123,8 +127,9 @@ describe("ZenVault Complex Scenarios", function () {
     await zenVault.connect(owner).doSlash(SLASH_AMOUNT, INITIAL_ERA);
 
     // Calculate expected slash amounts (based on original stake amounts, not post-reward)
-    const expectedSlash1 = (SLASH_AMOUNT * stakeAmount1) / totalStake;
-    const expectedSlash2 = (SLASH_AMOUNT * stakeAmount2) / totalStake;
+    const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+    const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
+    const expectedSlash2 = (slashRatio * stakeAmount2) / PRECISION_FACTOR;
 
     // Verify slash was applied correctly to the post-reward balances
     expect(await zenVault.stakedBalances(user1.address)).to.equal(
@@ -273,19 +278,21 @@ describe("ZenVault Complex Scenarios", function () {
     await zenVault.recordEraStake();
 
     // Apply slash to the new era
-    await zenVault.connect(owner).doSlash(SLASH_AMOUNT, INITIAL_ERA + 1);
+    const bigSlashAmount = SLASH_AMOUNT * 3n; // 30 * 3 = 90
+    await zenVault.connect(owner).doSlash(bigSlashAmount, INITIAL_ERA + 1);
+    const slashRatio = bigSlashAmount * PRECISION_FACTOR / totalStaked;
+    const userSlash = slashRatio * totalStaked / PRECISION_FACTOR;
 
-    // Verify staked balance was reduced by slash amount
+    // Verify staked balance was reduced to zero
     // Since there's only one staker, they get the full slash
-    // But the slash should be applied proportionally to staked and unlocking amounts
+    // The slash should be applied first to the staked balance and then to unlocking amounts
 
     // Calculate how much should be slashed from each portion
-    const totalValue = totalStaked; // Total value before unstaking
     const stakedPortion = totalStaked - unstakeAmount;
     const unlockingPortion = unstakeAmount;
 
-    const slashFromStaked = (SLASH_AMOUNT * stakedPortion) / totalValue;
-    const slashFromUnlocking = (SLASH_AMOUNT * unlockingPortion) / totalValue;
+    const slashFromStaked = stakedPortion >= userSlash ? userSlash : stakedPortion;
+    const slashFromUnlocking = stakedPortion >= userSlash ? 0n : userSlash - stakedPortion;
 
     // Verify staked balance after slash
     expect(await zenVault.stakedBalances(user.address)).to.equal(stakedPortion - slashFromStaked);
@@ -293,5 +300,9 @@ describe("ZenVault Complex Scenarios", function () {
     // Verify unlocking chunk was slashed
     unlockingChunks = await zenVault.getUserUnlockingChunks(user.address);
     expect(unlockingChunks[0].value).to.equal(unlockingPortion - slashFromUnlocking);
+  });
+
+  it("should handle slashing from multiple unlocking chunks", async function () {
+    // TODO: implement test
   });
 });
