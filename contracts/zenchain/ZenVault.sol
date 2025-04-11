@@ -229,18 +229,17 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         totalStakeAtEra[era] = currentTotalStake;
         // set lastUpdate era
         lastEraUpdate = era;
+        // set era stakers
+        address[] memory stakersInMemory = stakers;
+        eraStakers[era] = stakersInMemory;
 
         // Update era exposures
-        address[] memory stakersInMemory = stakers;
-        uint256 len = stakersInMemory.length;
-        address[] memory currentEraStakers = new address[](len);
         mapping(address => uint256) storage currentEraExposures = stakerEraExposures[era];
+        uint256 len = stakersInMemory.length;
         for (uint256 i = 0; i < len; i++) {
             address staker = stakersInMemory[i];
             currentEraExposures[staker] = stakedBalances[staker];
-            currentEraStakers[i] = staker;
         }
-        eraStakers[era] = currentEraStakers;
 
         emit EraExposureRecorded(era, currentTotalStake);
     }
