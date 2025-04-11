@@ -64,7 +64,7 @@ describe("ZenVault Gas Tests", function () {
     const tx = await zenVault.connect(user1).unstake(STAKE_AMOUNT);
     const receipt = await tx.wait();
 
-    console.log(`Gas used for unstake: ${receipt?.gasUsed}`);
+    console.log(`Gas used for full unstake: ${receipt?.gasUsed}`);
   });
 
   it("should test gas costs for partial unstake", async function () {
@@ -76,7 +76,7 @@ describe("ZenVault Gas Tests", function () {
     const tx = await zenVault.connect(user1).unstake(STAKE_AMOUNT / 2n);
     const receipt = await tx.wait();
 
-    console.log(`Gas used for unstake: ${receipt?.gasUsed}`);
+    console.log(`Gas used for partial unstake: ${receipt?.gasUsed}`);
   });
 
   it("should test gas costs with a large number of stakers for recordEraStake", async function () {

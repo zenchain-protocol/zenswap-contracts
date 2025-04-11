@@ -284,20 +284,22 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 rewardRatio = rewardAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
         // Distribute rewards proportionally to stakers based on their era exposure
+        mapping(address => uint256) storage currentEraExposures = stakerEraExposures[era];
         uint256 totalRewarded = 0;
         address[] memory exposedStakers = eraStakers[era];
-        UserReward[] memory allUserRewards = new UserReward[](exposedStakers.length);
         uint256 len = exposedStakers.length;
+        UserReward[] memory allUserRewards = new UserReward[](len);
         for (uint256 i = 0; i < len; i++) {
             address user = exposedStakers[i];
-            uint256 exposure = stakerEraExposures[era][user];
+            uint256 exposure = currentEraExposures[user];
             uint256 userReward = exposure * rewardRatio / PRECISION_FACTOR;
+            uint256 userBalanceBeforeReward = stakedBalances[user];
             // Update the stakers array.
-            if (stakedBalances[user] == 0) {
+            if (userBalanceBeforeReward == 0) {
                 stakers.push(user);
             }
             // Update the user's staked balance.
-            stakedBalances[user] = stakedBalances[user] + userReward;
+            stakedBalances[user] = userBalanceBeforeReward + userReward;
 
             allUserRewards[i] = UserReward(user, userReward);
             totalRewarded = totalRewarded + userReward;
@@ -335,13 +337,14 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
         uint256 slashRatio = slashAmount * PRECISION_FACTOR / _totalStakeAtEra;
 
+        mapping(address => uint256) storage currentEraExposures = stakerEraExposures[era];
         uint256 totalSlashed = 0;
         address[] memory exposedStakers = eraStakers[era];
-        UserSlash[] memory allUserSlashes = new UserSlash[](exposedStakers.length);
         uint256 len = exposedStakers.length;
+        UserSlash[] memory allUserSlashes = new UserSlash[](len);
         for (uint256 i = 0; i < len; i++) {
             address user = exposedStakers[i];
-            uint256 exposure = stakerEraExposures[era][user];
+            uint256 exposure = currentEraExposures[user];
             uint256 intendedUserSlash = exposure * slashRatio / PRECISION_FACTOR;
             uint256 actualUserSlash = _applySlashToUser(intendedUserSlash, user);
             totalSlashed = totalSlashed + actualUserSlash;
@@ -369,14 +372,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function _applySlashToUser(uint256 slashAmount, address user) internal returns(uint256) {
         uint256 remainingSlash = slashAmount;
+        uint256 intialStakedBalance = stakedBalances[user];
         // Case 1: We can slash directly from user balance
-        if (stakedBalances[user] >= slashAmount) {
-            stakedBalances[user] = stakedBalances[user] - slashAmount;
+        if (intialStakedBalance >= slashAmount) {
+            stakedBalances[user] = intialStakedBalance - slashAmount;
             remainingSlash = 0;
         // Case 2: User's balance is in the process of unlocking
         } else {
             // slash from stake balance first
-            remainingSlash = remainingSlash - stakedBalances[user];
+            remainingSlash = remainingSlash - intialStakedBalance;
             stakedBalances[user] = 0;
             // slash from unlocking chunks
             UnlockChunk[] storage chunks = unlocking[user];
