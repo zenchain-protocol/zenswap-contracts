@@ -230,7 +230,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         lastEraUpdate = era;
 
         // Update era exposures
-        for (uint256 i = 0; i < stakers.length; i++) {
+        uint256 len = stakers.length;
+        for (uint256 i = 0; i < len; i++) {
             address staker = stakers[i];
             stakerEraExposures[era][staker] = stakedBalances[staker];
             eraStakers[era].push(staker);
@@ -282,7 +283,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 totalRewarded = 0;
         address[] memory exposedStakers = eraStakers[era];
         UserReward[] memory allUserRewards = new UserReward[](exposedStakers.length);
-        for (uint256 i = 0; i < exposedStakers.length; i++) {
+        uint256 len = exposedStakers.length;
+        for (uint256 i = 0; i < len; i++) {
             address user = exposedStakers[i];
             uint256 exposure = stakerEraExposures[era][user];
             uint256 userReward = exposure * rewardRatio / PRECISION_FACTOR;
@@ -332,7 +334,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 totalSlashed = 0;
         address[] memory exposedStakers = eraStakers[era];
         UserSlash[] memory allUserSlashes = new UserSlash[](exposedStakers.length);
-        for (uint256 i = 0; i < exposedStakers.length; i++) {
+        uint256 len = exposedStakers.length;
+        for (uint256 i = 0; i < len; i++) {
             address user = exposedStakers[i];
             uint256 exposure = stakerEraExposures[era][user];
             uint256 intendedUserSlash = exposure * slashRatio / PRECISION_FACTOR;
@@ -456,7 +459,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function getStakerExposuresForEras(address staker, uint32[] calldata eras) external view returns (uint256[] memory) {
         uint256[] memory exposures = new uint256[](eras.length);
-        for (uint i = 0; i < eras.length; i++) {
+        uint256 len = eras.length;
+        for (uint i = 0; i < len; i++) {
             exposures[i] = stakerEraExposures[eras[i]][staker];
         }
         return exposures;
@@ -471,7 +475,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     function getEraExposures(uint32 era) external view returns (EraExposure[] memory) {
         address[] memory users = eraStakers[era];
         EraExposure[] memory exposures = new EraExposure[](users.length);
-        for (uint i = 0; i < users.length; i++) {
+        uint256 len = users.length;
+        for (uint i = 0; i < len; i++) {
             exposures[i] = EraExposure(users[i], stakerEraExposures[era][users[i]]);
         }
         return exposures;
@@ -490,12 +495,14 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // remove a staker if fully unstaked
     function maybeRemoveFromStakers(address user) internal {
         if (stakedBalances[user] == 0) {
-            for (uint256 i = 0; i < stakers.length; i++) {
-                if (stakers[i] == user) {
-                    stakers[i] = stakers[stakers.length - 1];
-                    // It's okay to modify the array here because we are breaking from the loop
+            address[] memory stakersInMemory = stakers;
+            uint256 len = stakersInMemory.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (stakersInMemory[i] == user) {
+                    // Only perform the storage operations once we've found the index
+                    stakers[i] = stakers[len - 1];
                     stakers.pop();
-                    break;
+                    return;
                 }
             }
         }

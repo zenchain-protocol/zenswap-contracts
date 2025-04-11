@@ -53,13 +53,27 @@ describe("ZenVault Gas Tests", function () {
     console.log(`Gas used for stake: ${receipt?.gasUsed}`);
   });
 
-  it("should test gas costs for unstake", async function () {
+  it("should test gas costs for full unstake", async function () {
+    await lpToken.mint(user1.address, INITIAL_SUPPLY);
+    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
+    await zenVault.connect(user1).stake(STAKE_AMOUNT);
+
+    expect(await zenVault.stakedBalances(user1)).to.equal(STAKE_AMOUNT);
+
+    // Measure gas used for stake
+    const tx = await zenVault.connect(user1).unstake(STAKE_AMOUNT);
+    const receipt = await tx.wait();
+
+    console.log(`Gas used for unstake: ${receipt?.gasUsed}`);
+  });
+
+  it("should test gas costs for partial unstake", async function () {
     await lpToken.mint(user1.address, INITIAL_SUPPLY);
     await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
     await zenVault.connect(user1).stake(STAKE_AMOUNT);
 
     // Measure gas used for stake
-    const tx = await zenVault.connect(user1).unstake(STAKE_AMOUNT);
+    const tx = await zenVault.connect(user1).unstake(STAKE_AMOUNT / 2n);
     const receipt = await tx.wait();
 
     console.log(`Gas used for unstake: ${receipt?.gasUsed}`);
