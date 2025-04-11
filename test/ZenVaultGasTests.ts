@@ -106,7 +106,7 @@ describe("ZenVault Gas Tests", function () {
     console.log(`Gas used for distributeRewards with ${numStakers} stakers: ${receipt?.gasUsed}`);
   });
 
-  it("should test gas costs with a large number of stakers for doSlash", async function () {
+  it("should test gas costs with a large number of stakers for doSlash (no unlock chunks)", async function () {
     // Setup stakers
     const numStakers = 100;
     await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
@@ -118,7 +118,32 @@ describe("ZenVault Gas Tests", function () {
     const tx = await zenVault.connect(owner).doSlash(SLASH_AMOUNT, INITIAL_ERA);
     const receipt = await tx.wait();
 
-    console.log(`Gas used for doSlash with ${numStakers} stakers: ${receipt?.gasUsed}`);
+    console.log(`Gas used for doSlash with ${numStakers} staked stakers: ${receipt?.gasUsed}`);
+  });
+
+  it("should test gas costs with a large number of stakers for doSlash (each with staked balance + 2 unlocking chunks)", async function () {
+    // Setup stakers
+    const numStakers = 100;
+    const stakers = await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
+
+    // Record era stake
+    await zenVault.recordEraStake();
+
+    // calculate unrealistically big slash
+    const totalStake = await zenVault.totalStake();
+    const slashAmount = totalStake * 80n / 100n;
+
+    // unstake each staker, keeping 1/3 staked balance and 1/3 in each of two unlocking chunks
+    for (const staker of stakers) {
+      await zenVault.connect(staker).unstake(STAKE_AMOUNT / 3n);
+      await zenVault.connect(staker).unstake(STAKE_AMOUNT / 3n);
+    }
+
+    // Measure gas used for doSlash
+    const tx = await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
+    const receipt = await tx.wait();
+
+    console.log(`Gas used for doSlash with ${numStakers} unstaking stakers: ${receipt?.gasUsed}`);
   });
 
   it("should test gas costs with a large number of unlocking chunks for withdrawUnlocked", async function () {
