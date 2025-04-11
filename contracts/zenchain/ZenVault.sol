@@ -209,7 +209,6 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      1. Validates that the era is not already finalized
      *      2. Records the total stake amount for the era
      *      3. Updates the list of staker exposures for the era, capturing each staker's balance
-     *      4. Cleans up the stakers array by removing users with zero balance
      *      5. Updates the lastEraUpdate value to mark this era as processed
      *
      * @custom:throws "Era exposures have been finalized for the current era." - If trying to call this function twice in the same era
@@ -229,23 +228,10 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         lastEraUpdate = era;
 
         // Update era exposures
-        uint256 writeIndex = 0;
         for (uint256 i = 0; i < stakers.length; i++) {
             address staker = stakers[i];
-            uint256 stakeAmount = stakedBalances[staker];
-            if (stakeAmount > 0 && stakerEraExposures[era][staker] == 0) {
-                stakerEraExposures[era][staker] = stakeAmount;
-                eraStakers[era].push(staker);
-                if (writeIndex != i) {
-                    stakers[writeIndex] = staker;
-                }
-                writeIndex++;
-            }
-        }
-
-        // Resize the array to remove users who are no longer staking
-        while (stakers.length > writeIndex) {
-            stakers.pop();
+            stakerEraExposures[era][staker] = stakedBalances[staker];
+            eraStakers[era].push(staker);
         }
 
         emit EraExposureRecorded(era, totalStake);

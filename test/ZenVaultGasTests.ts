@@ -124,22 +124,4 @@ describe("ZenVault Gas Tests", function () {
 
     console.log(`Gas used for withdrawUnlocked with ${numChunks} unlocking chunks: ${receipt?.gasUsed}`);
   });
-
-  it("should test gas costs with a large stakers array during cleanup in recordEraStake", async function () {
-    // Setup stakers
-    const numStakers = 100;
-    const users = await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
-    expect(users.length).to.equal(numStakers);
-
-    // Unstake all tokens for half of the stakers to create "empty" entries
-    for (let i = 0; i < numStakers / 2; i++) {
-      await zenVault.connect(users[i]).unstake(STAKE_AMOUNT);
-    }
-
-    // Measure gas used for recordEraStake with cleanup
-    const tx = await zenVault.recordEraStake();
-    const receipt = await tx.wait();
-
-    console.log(`Gas used for recordEraStake cleanup with ${numStakers} stakers (half empty): ${receipt?.gasUsed}`);
-  });
 });
