@@ -176,7 +176,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 totalToTransfer = 0;
 
         // Iterate over all chunks
-        for (uint256 i = 0; i < chunks.length; i++) {
+        uint256 len = chunks.length;
+        for (uint256 i = 0; i < len; i++) {
             UnlockChunk memory chunk = chunks[i];
             if (chunk.era <= currentEra) {
                 // Chunk is unlocked: add its value to the total to transfer
@@ -191,7 +192,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         }
 
         // Remove unlocked chunks by popping excess elements
-        while (chunks.length > writeIndex) {
+        uint256 toPop = chunks.length - writeIndex;
+        for (uint256 i = 0; i < toPop; i++) {
             chunks.pop();
         }
 
