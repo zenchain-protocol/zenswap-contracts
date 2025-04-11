@@ -2,7 +2,7 @@ import {expect} from "chai";
 import {ethers} from "hardhat";
 import {MockStakingPrecompile, MockToken, ZenVault} from "../typechain-types";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
-import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
+import {createMultipleUnlockingChunks, PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 
 describe("ZenVault Complex Scenarios", function () {
   // Contracts
@@ -248,6 +248,47 @@ describe("ZenVault Complex Scenarios", function () {
   });
 
   it("should handle slashing from multiple unlocking chunks", async function () {
-    // TODO: implement test
+    // unstake user 2 to simplify math
+    await zenVault.connect(user2).unstake(stakeAmount2);
+    expect(await zenVault.totalStake()).to.equal(stakeAmount1);
+    // move to era 1 so we can control the total exposure
+    await mockStakingPrecompile.advanceEra(1);
+    await zenVault.recordEraStake();
+
+    // create unlocking chunks, such that the user's stake is split evenly between chunks and staked balance
+    const numUnlockingChunks = 3;
+    const chunkSize = stakeAmount1 / BigInt(numUnlockingChunks + 1);
+    for (let i = 0; i < numUnlockingChunks; i++) {
+      await zenVault.connect(user1).unstake(chunkSize);
+    }
+
+    // Verify unlocking chunks
+    let unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    expect(unlockingChunks.length).to.equal(3);
+    for (let i = 0; i < numUnlockingChunks; i++) {
+      expect(unlockingChunks[i].value).to.equal(chunkSize);
+    }
+
+    // Verify user stake
+    const totalStake = await zenVault.totalStake();
+    const userStake = await zenVault.stakedBalances(user1);
+    expect(userStake).to.equal(totalStake);
+    expect(userStake).to.equal(stakeAmount1 / 4n);
+
+    // Apply slash equal to staked balance, plus all but one of the unlocking chunks, plus part of the final chunk
+    const extra = ethers.parseEther("5");
+    const bigSlashAmount = chunkSize * BigInt(numUnlockingChunks) + extra;
+    await zenVault.connect(owner).doSlash(bigSlashAmount, INITIAL_ERA + 1);
+
+    // Verify staked balance was reduced to zero
+    // The slash should be applied first to the staked balance and then to unlocking amounts
+
+    // Verify staked balance after slash
+    expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
+
+    // Verify unlocking chunks were slashed
+    unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    expect(unlockingChunks.length).to.equal(1);
+    expect(unlockingChunks[0].value).to.equal(chunkSize - extra);
   });
 });
