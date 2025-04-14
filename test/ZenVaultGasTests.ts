@@ -1,7 +1,11 @@
 import { ethers } from "hardhat";
 import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import {createMultipleUnlockingChunks, setupLargeNumberOfStakers, setupTestEnvironment} from "./utils";
+import {
+  createMultipleUnlockingChunks,
+  setupLargeNumberOfStakers,
+  setupTestEnvironment
+} from "./utils";
 import {expect} from "chai";
 
 describe("ZenVault Gas Tests", function () {
@@ -42,7 +46,7 @@ describe("ZenVault Gas Tests", function () {
     await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
   });
 
-  it("should test gas costs for stake", async function () {
+  it("should test gas costs for stake from new user", async function () {
     await lpToken.mint(user1.address, INITIAL_SUPPLY);
     await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
 
@@ -50,7 +54,19 @@ describe("ZenVault Gas Tests", function () {
     const tx = await zenVault.connect(user1).stake(STAKE_AMOUNT);
     const receipt = await tx.wait();
 
-    console.log(`Gas used for stake: ${receipt?.gasUsed}`);
+    console.log(`Gas used for stake from new user: ${receipt?.gasUsed}`);
+  });
+
+  it("should test gas costs for stake (second call)", async function () {
+    await lpToken.mint(user1.address, 2n * INITIAL_SUPPLY);
+    await lpToken.connect(user1).approve(await zenVault.getAddress(), 2n * INITIAL_SUPPLY);
+
+    // Measure gas used for stake
+    await zenVault.connect(user1).stake(STAKE_AMOUNT);
+    const tx = await zenVault.connect(user1).stake(STAKE_AMOUNT);
+    const receipt = await tx.wait();
+
+    console.log(`Gas used for second stake: ${receipt?.gasUsed}`);
   });
 
   it("should test gas costs for full unstake", async function () {

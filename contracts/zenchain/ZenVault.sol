@@ -24,8 +24,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // Mapping of user addresses to their staked amounts.
     mapping(address => uint256) public stakedBalances;
 
-    // A list of stakers; roughly corresponds to keys of stakedBalances, but can be outdated.
-    address[] private stakers;
+    // A list of stakers; corresponds to keys of stakedBalances.
+    address[] public stakers;
 
     // Mapping of era index to total stake
     mapping(uint32 => uint256) public totalStakeAtEra;
@@ -99,11 +99,13 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         pool.transferFrom(msg.sender, address(this), amount);
 
         // Update the user's staked balance.
-        if (stakedBalances[msg.sender] < minStake) {
+        uint256 initialBalance = stakedBalances[msg.sender];
+        if (initialBalance < minStake) {
+            removeFromStakers(msg.sender);
             stakers.push(msg.sender);
         }
-        stakedBalances[msg.sender] = stakedBalances[msg.sender] + amount;
-        totalStake = totalStake + amount;
+        stakedBalances[msg.sender] = initialBalance + amount;
+        totalStake += amount;
 
         emit Staked(msg.sender, amount);
     }
@@ -135,7 +137,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         require(remainingBalance > minStake || remainingBalance == 0, "Remaining staked balance must either be zero or at least minStake");
 
         // Update the user's staked balance.
-        stakedBalances[msg.sender] = stakedBalances[msg.sender] - amount;
+        stakedBalances[msg.sender] = remainingBalance;
         totalStake = totalStake - amount;
 
         // Transfer the staking tokens from stakedBalances to unlocking
@@ -145,7 +147,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         unlocking[msg.sender].push(chunk);
 
         // remove staker if fully unstaked
-        maybeRemoveFromStakers(msg.sender);
+        if (remainingBalance < minStake) {
+            removeFromStakers(msg.sender);
+        }
 
         emit Unstaked(msg.sender, amount);
     }
@@ -245,7 +249,10 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 len = stakersInMemory.length;
         for (uint256 i = 0; i < len; i++) {
             address staker = stakersInMemory[i];
-            currentEraExposures[staker] = stakedBalances[staker];
+            uint256 userBalance = stakedBalances[staker];
+            if (userBalance >= minStake) {
+                currentEraExposures[staker] = userBalance;
+            }
         }
 
         emit EraExposureRecorded(era, currentTotalStake);
@@ -301,12 +308,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             uint256 exposure = currentEraExposures[user];
             uint256 userReward = exposure * rewardRatio / PRECISION_FACTOR;
             uint256 userBalanceBeforeReward = stakedBalances[user];
+            uint256 userBalanceAfterReward = userBalanceBeforeReward + userReward;
             // Update the stakers array.
-            if (userBalanceBeforeReward < minStake) {
+            if (userBalanceAfterReward < minStake) {
+                removeFromStakers(user);
+            } else if (userBalanceBeforeReward < minStake) {
                 stakers.push(user);
             }
             // Update the user's staked balance.
-            stakedBalances[user] = userBalanceBeforeReward + userReward;
+            stakedBalances[user] = userBalanceAfterReward;
 
             allUserRewards[i] = UserReward(user, userReward);
             totalRewarded = totalRewarded + userReward;
@@ -356,8 +366,6 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             uint256 actualUserSlash = _applySlashToUser(intendedUserSlash, user);
             totalSlashed = totalSlashed + actualUserSlash;
             allUserSlashes[i] = UserSlash(user, actualUserSlash);
-            // cleanup: remove staker if fully unstaked
-            maybeRemoveFromStakers(user);
         }
 
         // totalSlashed may slightly differ from slashAmount due to precision, but that's okay.
@@ -382,13 +390,20 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 intialStakedBalance = stakedBalances[user];
         // Case 1: We can slash directly from user balance
         if (intialStakedBalance >= slashAmount) {
-            stakedBalances[user] = intialStakedBalance - slashAmount;
+            uint256 remainingBalance = intialStakedBalance - slashAmount;
+            stakedBalances[user] = remainingBalance;
             remainingSlash = 0;
+            // cleanup: remove staker if fully unstaked
+            if (remainingBalance < minStake) {
+                removeFromStakers(user);
+            }
         // Case 2: User's balance is in the process of unlocking
         } else {
             // slash from stake balance first
             remainingSlash = remainingSlash - intialStakedBalance;
             stakedBalances[user] = 0;
+            // cleanup: remove fully unstaked user from stakers list
+            removeFromStakers(user);
             // slash from unlocking chunks
             UnlockChunk[] storage chunks = unlocking[user];
             while (chunks.length > 0 && remainingSlash > 0) {
@@ -466,8 +481,18 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @custom:emits MinStakeSet when the minimum stake value is updated
      */
     function setMinStake(uint256 _minStake) external onlyOwner {
+        uint256 oldMinStake = minStake;
         minStake = _minStake;
         emit MinStakeSet(_minStake);
+    }
+
+    /**
+     * @notice Returns the complete list of current stakers in the vault
+     * @dev Provides read-only access to the entire stakers array
+     * @return An array of addresses that have active stakes in the vault
+     */
+    function getCurrentStakers() external view returns (address[] memory) {
+        return stakers;
     }
 
     /**
@@ -518,18 +543,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         return unlocking[user];
     }
 
-    // remove a staker if stake < minStake
-    function maybeRemoveFromStakers(address user) internal {
-        if (stakedBalances[user] < minStake) {
-            address[] memory stakersInMemory = stakers;
-            uint256 len = stakersInMemory.length;
-            for (uint256 i = 0; i < len; i++) {
-                if (stakersInMemory[i] == user) {
-                    // Only perform the storage operations once we've found the index
-                    stakers[i] = stakers[len - 1];
-                    stakers.pop();
-                    return;
-                }
+    // Remove a staker from the stakers list. Only use if stake < minStake!
+    function removeFromStakers(address user) internal {
+        address[] memory stakersInMemory = stakers;
+        uint256 len = stakersInMemory.length;
+        for (uint256 i = 0; i < len; i++) {
+            if (stakersInMemory[i] == user) {
+                stakers[i] = stakersInMemory[len - 1];
+                stakers.pop();
+                return;
             }
         }
     }

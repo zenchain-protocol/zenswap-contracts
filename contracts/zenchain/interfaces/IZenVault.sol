@@ -176,6 +176,14 @@ interface IZenVault {
     function stakedBalances(address account) external view returns (uint256);
 
     /**
+     * @notice Returns the address of a staker at the specified index
+     * @dev Provides access to the list of all stakers in the vault
+     * @param index The position in the stakers array to query
+     * @return staker The address of the staker at the given index
+     */
+    function stakers(uint256 index) external view returns (address staker);
+
+    /**
      * @notice Returns the total amount staked in the vault at a specific era
      * @dev Used for historical tracking of stake amounts across different eras
      * @param era The era number to query
@@ -314,6 +322,13 @@ interface IZenVault {
 // ------------------------------------------------------------
 // User-defined view methods
 // ------------------------------------------------------------
+
+    /**
+     * @notice Returns the list of all current stakers in the vault
+     * @dev Provides an array of addresses that currently have active stakes
+     * @return An array of addresses representing all current stakers
+     */
+    function getCurrentStakers() external view returns (address[] memory);
 
     /**
      * @notice Retrieves a staker's exposure amounts across multiple eras
