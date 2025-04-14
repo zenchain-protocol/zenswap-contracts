@@ -8,6 +8,7 @@ import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
 // TODO: clear old data periodically to save storage space
+// TODO: paginate methods instead of iterating through large arrays?
 
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     uint256 constant public PRECISION_FACTOR = 1e18;
@@ -51,6 +52,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
     // A user cannot stake an amount less than minStake.
     uint256 public minStake = 1e18;
+
+    // The length limit of a user's `unlocking` array.
+    uint256 public maxUnlockChunks = 10;
 
     /**
      * @notice Initializes the ZenVault contract with a Uniswap V2 pair address
@@ -122,6 +126,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @custom:throws "Amount must be greater than zero." - If the amount is 0
      * @custom:throws "Insufficient staked balance." - If the user's staked balance is less than the requested amount
      * @custom:throws "Remaining staked balance must either be zero or at least minStake" - If remaining staked balance would fall below minStake but exceed zero
+     * @custom:throws "Unlocking array length limit has been reached. Withdraw unlocked tokens before unstaking." - If user has too many unlocking chunks.
      *
      * @custom:emits Unstaked - When tokens are successfully unstaked
      *
@@ -134,6 +139,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         require(initialUserBalance >= amount, "Insufficient staked balance.");
         uint256 remainingBalance = initialUserBalance - amount;
         require(remainingBalance >= minStake || remainingBalance == 0, "Remaining staked balance must either be zero or at least minStake");
+        require(unlocking[msg.sender].length < maxUnlockChunks, "Unlocking array length limit reached. Withdraw unlocked tokens before unstaking.");
 
         // Update the user's staked balance.
         stakedBalances[msg.sender] = remainingBalance;

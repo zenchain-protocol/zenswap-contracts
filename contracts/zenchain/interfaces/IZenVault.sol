@@ -244,6 +244,13 @@ interface IZenVault {
      */
     function minStake() external view returns (uint256);
 
+    /**
+     * @notice Returns the maximum number of unlock chunks a user can have simultaneously
+     * @dev This value limits the size of a user's unlocking array to prevent DoS attacks
+     * @return The maximum number of unstaking operations a user can have in the unlocking state
+     */
+    function maxUnlockChunks() external view returns (uint256);
+
 // ------------------------------------------------------------
 // Transaction (mutation) methods
 // ------------------------------------------------------------

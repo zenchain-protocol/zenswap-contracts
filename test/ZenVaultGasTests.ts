@@ -166,8 +166,8 @@ describe("ZenVault Gas Tests", function () {
     // Get a user
     const user = (await ethers.getSigners())[2];
 
-    // Create many unlocking chunks
-    const numChunks = 50; // Start with 50 chunks
+    // Create max unlocking chunks
+    const numChunks = Number(await zenVault.maxUnlockChunks());
     await createMultipleUnlockingChunks(user, numChunks, lpToken, zenVault, STAKE_AMOUNT);
 
     // Advance era to after bonding period
