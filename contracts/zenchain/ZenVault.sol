@@ -91,7 +91,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function stake(uint256 amount) external nonReentrant {
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
-        require(amount > minStake, "Amount must be greater than minStake.");
+        require(amount >= minStake, "Amount must be at least minStake.");
         uint256 poolAllowance = pool.allowance(msg.sender, address(this));
         require(poolAllowance >= amount, "Not enough allowance to transfer tokens from the user to the vault.");
 
@@ -101,7 +101,6 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         // Update the user's staked balance.
         uint256 initialBalance = stakedBalances[msg.sender];
         if (initialBalance < minStake) {
-            removeFromStakers(msg.sender);
             stakers.push(msg.sender);
         }
         stakedBalances[msg.sender] = initialBalance + amount;
@@ -134,7 +133,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 initialUserBalance = stakedBalances[msg.sender];
         require(initialUserBalance >= amount, "Insufficient staked balance.");
         uint256 remainingBalance = initialUserBalance - amount;
-        require(remainingBalance > minStake || remainingBalance == 0, "Remaining staked balance must either be zero or at least minStake");
+        require(remainingBalance >= minStake || remainingBalance == 0, "Remaining staked balance must either be zero or at least minStake");
 
         // Update the user's staked balance.
         stakedBalances[msg.sender] = remainingBalance;
@@ -249,10 +248,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 len = stakersInMemory.length;
         for (uint256 i = 0; i < len; i++) {
             address staker = stakersInMemory[i];
-            uint256 userBalance = stakedBalances[staker];
-            if (userBalance >= minStake) {
-                currentEraExposures[staker] = userBalance;
-            }
+            currentEraExposures[staker] = stakedBalances[staker];
         }
 
         emit EraExposureRecorded(era, currentTotalStake);
@@ -310,9 +306,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             uint256 userBalanceBeforeReward = stakedBalances[user];
             uint256 userBalanceAfterReward = userBalanceBeforeReward + userReward;
             // Update the stakers array.
-            if (userBalanceAfterReward < minStake) {
-                removeFromStakers(user);
-            } else if (userBalanceBeforeReward < minStake) {
+            if (userBalanceBeforeReward < minStake && userBalanceAfterReward >= minStake) {
                 stakers.push(user);
             }
             // Update the user's staked balance.
@@ -481,9 +475,23 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @custom:emits MinStakeSet when the minimum stake value is updated
      */
     function setMinStake(uint256 _minStake) external onlyOwner {
+        require(_minStake > 0, "The minimum stake must be greater than 0.");
         uint256 oldMinStake = minStake;
         minStake = _minStake;
         emit MinStakeSet(_minStake);
+
+        // ensure invariant
+        if (oldMinStake < minStake) {
+            address[] memory stakersInMemory = stakers;
+            uint256 len = stakersInMemory.length;
+            for (uint256 i = 0; i < len; i++) {
+                if (stakedBalances[stakersInMemory[i]] < minStake) {
+                    stakers[i] = stakersInMemory[len - 1];
+                    stakers.pop();
+                    len -= 1;
+                }
+            }
+        }
     }
 
     /**

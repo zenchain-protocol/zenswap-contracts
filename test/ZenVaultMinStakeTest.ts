@@ -48,15 +48,16 @@ describe("ZenVault MinStake Tests", function () {
       expect(await zenVault.minStake()).to.equal(DEFAULT_MIN_STAKE);
     });
 
+    it("should allow staking exactly minStake", async function () {
+      await zenVault.connect(user1).stake(DEFAULT_MIN_STAKE);
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(DEFAULT_MIN_STAKE);
+      expect(await zenVault.getCurrentStakers()).to.contain(user1.address);
+    });
+
     it("should not allow staking less than minStake", async function () {
       const belowMinStake = DEFAULT_MIN_STAKE - ethers.parseEther("0.1");
       await expect(zenVault.connect(user1).stake(belowMinStake))
-        .to.be.revertedWith("Amount must be greater than minStake.");
-    });
-
-    it("should not allow staking exactly minStake", async function () {
-      await expect(zenVault.connect(user1).stake(DEFAULT_MIN_STAKE))
-        .to.be.revertedWith("Amount must be greater than minStake.");
+        .to.be.revertedWith("Amount must be at least minStake.");
     });
 
     it("should allow staking more than minStake", async function () {
@@ -80,21 +81,34 @@ describe("ZenVault MinStake Tests", function () {
     });
 
     it("should allow unstaking that leaves balance >= minStake", async function () {
-      const unstakeAmount = stakeAmount - DEFAULT_MIN_STAKE - ethers.parseEther("0.1");
+      const unstakeAmount = stakeAmount - DEFAULT_MIN_STAKE;
       await zenVault.connect(user1).unstake(unstakeAmount);
 
       const remainingBalance = await zenVault.stakedBalances(user1.address);
-      expect(remainingBalance).to.be.gt(DEFAULT_MIN_STAKE);
+      expect(remainingBalance).to.equal(DEFAULT_MIN_STAKE);
+    });
+
+    it("should allow unstaking after removal from stakers list", async function () {
+      // set min stake above user staked balance
+      const newMinStake = stakeAmount + ethers.parseEther("1");
+      await zenVault.connect(owner).setMinStake(newMinStake);
+
+      // verify user's staked balance is unchanged and below min stake
+      const stakedBalance = await zenVault.stakedBalances(user1.address);
+      expect(stakedBalance).to.be.lt(newMinStake);
+      expect(stakedBalance).to.equal(stakeAmount);
+
+      // verify user not in stakers
+      const stakers = await zenVault.getCurrentStakers();
+      expect(stakers).not.to.contain(user1.address);
+
+      // unstake
+      await zenVault.connect(user1).unstake(stakeAmount);
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
     });
 
     it("should not allow unstaking that leaves balance between 0 and minStake", async function () {
       const unstakeAmount = stakeAmount - ethers.parseEther("0.5"); // Leaves 0.5 ETH, which is below minStake
-      await expect(zenVault.connect(user1).unstake(unstakeAmount))
-        .to.be.revertedWith("Remaining staked balance must either be zero or at least minStake");
-    });
-
-    it("should not allow unstaking exactly to minStake", async function () {
-      const unstakeAmount = stakeAmount - DEFAULT_MIN_STAKE;
       await expect(zenVault.connect(user1).unstake(unstakeAmount))
         .to.be.revertedWith("Remaining staked balance must either be zero or at least minStake");
     });
@@ -184,7 +198,7 @@ describe("ZenVault MinStake Tests", function () {
       // Try to stake an amount that was valid before but is now below minStake
       const smallStake = ethers.parseEther("5.5");
       await expect(zenVault.connect(user2).stake(smallStake))
-        .to.be.revertedWith("Amount must be greater than minStake.");
+        .to.be.revertedWith("Amount must be at least minStake.");
 
       // Try to stake an amount above the new minStake
       const largeStake = ethers.parseEther("7");
@@ -226,6 +240,11 @@ describe("ZenVault MinStake Tests", function () {
       const validUnstakeAmount = ethers.parseEther("1.5");
       await zenVault.connect(user1).unstake(validUnstakeAmount);
       expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount - validUnstakeAmount);
+    });
+
+    it("should not allow minStake of 0", async function () {
+      await expect(zenVault.connect(owner).setMinStake(0n))
+        .to.be.revertedWith("The minimum stake must be greater than 0.");
     });
   });
 });

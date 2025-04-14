@@ -92,12 +92,12 @@ describe("ZenVault", function () {
 
     it("should not allow staking zero amount", async function () {
       await expect(zenVault.connect(user1).stake(0))
-        .to.be.revertedWith("Amount must be greater than minStake.");
+        .to.be.revertedWith("Amount must be at least minStake.");
     });
 
     it("should not allow staking below minStake", async function () {
       await expect(zenVault.connect(user1).stake(ethers.parseEther("0.5")))
-        .to.be.revertedWith("Amount must be greater than minStake.");
+        .to.be.revertedWith("Amount must be at least minStake.");
     });
 
     it("should track multiple stakers correctly", async function () {
