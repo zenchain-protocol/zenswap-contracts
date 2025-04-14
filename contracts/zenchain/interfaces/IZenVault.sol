@@ -83,6 +83,13 @@ interface IZenVault {
      */
     event RewardAccountSet(address account);
 
+    /**
+     * @notice Emitted when the minimum staking threshold is updated
+     * @dev This event is triggered when the contract owner changes the minimum amount required for staking
+     * @param minStake The new minimum amount of tokens required for a stake operation
+     */
+    event MinStakeSet(uint256 minStake);
+
 // ------------------------------------------------------------
 // Structs
 // ------------------------------------------------------------
@@ -142,6 +149,13 @@ interface IZenVault {
      * @return The IUniswapV2Pair interface of the associated liquidity pool
      */
     function pool() external view returns (IUniswapV2Pair);
+
+    /**
+     * @notice Returns the address that receives staking rewards on behalf of the vault
+     * @dev This account is responsible for collecting and distributing rewards to vault stakers
+     * @return The address of the reward account
+     */
+    function rewardAccount() external view returns (address);
 
     /**
      * @notice Returns information about a user's unlocking token chunk
@@ -216,11 +230,11 @@ interface IZenVault {
     function isWithdrawEnabled() external view returns (bool);
 
     /**
-     * @notice Returns the address that receives staking rewards on behalf of the vault
-     * @dev This account is responsible for collecting and distributing rewards to vault stakers
-     * @return The address of the reward account
+     * @notice Returns the minimum amount of tokens required for staking
+     * @dev External view function that retrieves the minimum stake threshold
+     * @return uint256 The minimum amount of tokens (in wei) that can be staked in the vault
      */
-    function rewardAccount() external view returns (address);
+    function minStake() external view returns (uint256);
 
 // ------------------------------------------------------------
 // Transaction (mutation) methods
@@ -289,6 +303,17 @@ interface IZenVault {
      * @param _rewardAccount The new address to be set as the reward account
      */
     function setRewardAccount(address _rewardAccount) external;
+
+    /**
+     * @notice Updates the minimum amount of tokens required for staking
+     * @dev Can only be called by authorized accounts (likely owner)
+     * @param _minStake The new minimum staking amount in token units
+     */
+    function setMinStake(uint256 _minStake) external;
+
+// ------------------------------------------------------------
+// User-defined view methods
+// ------------------------------------------------------------
 
     /**
      * @notice Retrieves a staker's exposure amounts across multiple eras

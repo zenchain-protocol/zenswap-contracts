@@ -92,7 +92,12 @@ describe("ZenVault", function () {
 
     it("should not allow staking zero amount", async function () {
       await expect(zenVault.connect(user1).stake(0))
-        .to.be.revertedWith("Amount must be greater than zero.");
+        .to.be.revertedWith("Amount must be greater than minStake.");
+    });
+
+    it("should not allow staking below minStake", async function () {
+      await expect(zenVault.connect(user1).stake(ethers.parseEther("0.5")))
+        .to.be.revertedWith("Amount must be greater than minStake.");
     });
 
     it("should track multiple stakers correctly", async function () {
@@ -497,6 +502,34 @@ describe("ZenVault", function () {
 
     it("should not allow non-owners to set reward account", async function () {
       await expect(zenVault.connect(user1).setRewardAccount(user2.address))
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+    });
+
+    it("should allow owner to set minimum stake threshold", async function () {
+      // verify default min stake
+      const initialMinStake = ethers.parseEther("1");
+      expect(await zenVault.minStake()).to.equal(initialMinStake);
+
+      // set higher minimum stake
+      const higherMinStake = ethers.parseEther("10");
+      await zenVault.connect(owner).setMinStake(higherMinStake);
+      expect(await zenVault.minStake()).to.equal(higherMinStake);
+
+      // set minStake back to default
+      await zenVault.connect(owner).setMinStake(initialMinStake);
+      expect(await zenVault.minStake()).to.equal(initialMinStake);
+    });
+
+    it("should emit MinStakeSet event", async function () {
+      const minStake = ethers.parseEther("1");
+      await expect(zenVault.connect(owner).setMinStake(minStake))
+        .to.emit(zenVault, "MinStakeSet")
+        .withArgs(minStake);
+    });
+
+    it("should not allow non-owners to set minStake", async function () {
+      const minStake = ethers.parseEther("1");
+      await expect(zenVault.connect(user1).setMinStake(minStake))
         .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
   });

@@ -7,13 +7,16 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
-// TODO: clear old data periodically to save storage space?
+// TODO: clear old data periodically to save storage space
 
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     uint256 constant public PRECISION_FACTOR = 1e18;
 
     // The liquidity pool token that can be staked in this vault.
     IUniswapV2Pair public pool;
+
+    // The account that receives awards from consensus staking, on behalf of the vault, and distributes the rewards among the vault stakers.
+    address public rewardAccount;
 
     // Mapping of user addresses to their unlocking balances.
     mapping(address => UnlockChunk[]) public unlocking;
@@ -46,8 +49,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // If false, withdrawals are not permitted. This can be used in the case of an emergency.
     bool public isWithdrawEnabled = true;
 
-    // The account that receives awards from consensus staking, on behalf of the vault, and distributes the rewards among the vault stakers.
-    address public rewardAccount;
+    // A user cannot stake an amount less than minStake.
+    uint256 public minStake = 1e18;
 
     /**
      * @notice Initializes the ZenVault contract with a Uniswap V2 pair address
@@ -74,10 +77,10 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      3. Adds the user to the stakers array if this is their first stake
      *      4. Updates the total stake in the ZenVault
      *
-     * @param amount The amount of tokens to stake (must be > 0)
+     * @param amount The amount of tokens to stake (must be > minStake)
      *
      * @custom:throws "Staking is not currently permitted in this ZenVault." - If staking is disabled
-     * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
+     * @custom:throws "Amount must be greater than minStake." - If the amount is less than minStake
      * @custom:throws "Not enough allowance to transfer tokens from the user to the vault." - If allowance is insufficient
      * @custom:throws Various errors may be thrown by the transferFrom function
      *
@@ -88,7 +91,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function stake(uint256 amount) external nonReentrant {
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
-        require(amount > 0, "Amount must be greater than zero.");
+        require(amount > minStake, "Amount must be greater than minStake.");
         uint256 poolAllowance = pool.allowance(msg.sender, address(this));
         require(poolAllowance >= amount, "Not enough allowance to transfer tokens from the user to the vault.");
 
@@ -96,7 +99,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         pool.transferFrom(msg.sender, address(this), amount);
 
         // Update the user's staked balance.
-        if (stakedBalances[msg.sender] == 0) {
+        if (stakedBalances[msg.sender] < minStake) {
             stakers.push(msg.sender);
         }
         stakedBalances[msg.sender] = stakedBalances[msg.sender] + amount;
@@ -115,8 +118,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *
      * @param amount Amount of tokens to unstake (must be > 0 and <= user's staked balance)
      *
-     * @custom:throws "Amount must be greater than zero." - If the amount is 0 or negative
+     * @custom:throws "Amount must be greater than zero." - If the amount is 0
      * @custom:throws "Insufficient staked balance." - If the user's staked balance is less than the requested amount
+     * @custom:throws "Remaining staked balance must either be zero or at least minStake" - If remaining staked balance would fall below minStake but exceed zero
      *
      * @custom:emits Unstaked - When tokens are successfully unstaked
      *
@@ -125,7 +129,10 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function unstake(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than zero.");
-        require(stakedBalances[msg.sender] >= amount, "Insufficient staked balance.");
+        uint256 initialUserBalance = stakedBalances[msg.sender];
+        require(initialUserBalance >= amount, "Insufficient staked balance.");
+        uint256 remainingBalance = initialUserBalance - amount;
+        require(remainingBalance > minStake || remainingBalance == 0, "Remaining staked balance must either be zero or at least minStake");
 
         // Update the user's staked balance.
         stakedBalances[msg.sender] = stakedBalances[msg.sender] - amount;
@@ -253,7 +260,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      3. Adding rewards to stakers' balances without requiring them to claim separately
      *      4. Incrementing the total stake with the reward amount
      *
-     * The reward distribution uses a precision factor (1e12) to ensure accurate calculation of proportional rewards
+     * The reward distribution uses a precision factor (1e18) to ensure accurate calculation of proportional rewards
      * even when dealing with small amounts.
      *
      * @param rewardAmount Amount of tokens to distribute as rewards (must be > 0)
@@ -295,7 +302,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             uint256 userReward = exposure * rewardRatio / PRECISION_FACTOR;
             uint256 userBalanceBeforeReward = stakedBalances[user];
             // Update the stakers array.
-            if (userBalanceBeforeReward == 0) {
+            if (userBalanceBeforeReward < minStake) {
                 stakers.push(user);
             }
             // Update the user's staked balance.
@@ -453,6 +460,17 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     }
 
     /**
+     * @notice Updates the minimum staking amount required for the vault
+     * @dev Can only be called by the contract owner
+     * @param _minStake The new minimum amount of tokens that users must stake
+     * @custom:emits MinStakeSet when the minimum stake value is updated
+     */
+    function setMinStake(uint256 _minStake) external onlyOwner {
+        minStake = _minStake;
+        emit MinStakeSet(_minStake);
+    }
+
+    /**
      * @notice Retrieves a staker's exposure values for multiple eras
      * @dev Returns an array containing the staker's exposure for each requested era.
      *      The function accesses the stakerEraExposures mapping which tracks a staker's
@@ -500,9 +518,9 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         return unlocking[user];
     }
 
-    // remove a staker if fully unstaked
+    // remove a staker if stake < minStake
     function maybeRemoveFromStakers(address user) internal {
-        if (stakedBalances[user] == 0) {
+        if (stakedBalances[user] < minStake) {
             address[] memory stakersInMemory = stakers;
             uint256 len = stakersInMemory.length;
             for (uint256 i = 0; i < len; i++) {
