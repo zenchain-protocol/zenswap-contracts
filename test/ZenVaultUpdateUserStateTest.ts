@@ -90,22 +90,19 @@ describe("ZenVault updateUserState Tests", function () {
       await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
 
       // Calculate expected values
-      const totalStake = STAKE_AMOUNT;
-      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
-      const expectedReward = (rewardRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
-      const postRewardStake = STAKE_AMOUNT + expectedReward;
-      const postRewardTotalStake = totalStake + REWARD_AMOUNT;
-      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / postRewardTotalStake;
-      const expectedSlash = (slashRatio * postRewardStake) / PRECISION_FACTOR;
+      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
+      const expectedSlash = (slashRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
+      const postSlashStake = STAKE_AMOUNT - expectedSlash;
+      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
+      const expectedReward = (rewardRatio * postSlashStake) / PRECISION_FACTOR;
+      const expectedFinalStake = postSlashStake + expectedReward;
 
       // Call updateUserState
       await zenVault.connect(user1).updateUserState();
 
       // Verify both rewards and slashes were applied
       const actualBalance = await zenVault.stakedBalances(user1.address);
-      console.log(`Expected: ${postRewardStake - expectedSlash}, Actual: ${actualBalance}`);
-      // The difference is around 6 ETH, so we'll use a larger tolerance
-      expect(actualBalance).to.be.closeTo(postRewardStake - expectedSlash, ethers.parseEther("7")); // Allow larger rounding difference
+      expect(actualBalance).to.equal(expectedFinalStake);
     });
 
     it("should do nothing when no rewards or slashes are pending", async function () {

@@ -106,13 +106,12 @@ describe("ZenVault View Function Tests", function () {
       const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
       const expectedSlash = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
       const postSlashStake = stakeAmount1 - expectedSlash;
-      const postSlashTotalStake = totalStake - SLASH_AMOUNT;
-      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / postSlashTotalStake;
+      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
       const expectedReward = (rewardRatio * postSlashStake) / PRECISION_FACTOR;
 
       // Check pending rewards
       const pendingRewards = await zenVault.getPendingRewards(user1.address);
-      expect(pendingRewards).to.be.closeTo(expectedReward, ethers.parseEther("2")); // Allow larger rounding difference
+      expect(pendingRewards).to.equal(expectedReward);
     });
 
     it("should handle getPendingRewards with zero stake", async function () {
@@ -153,16 +152,12 @@ describe("ZenVault View Function Tests", function () {
 
       // Calculate expected values
       const totalStake = stakeAmount1 + stakeAmount2;
-      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
-      const expectedReward = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
-      const postRewardStake = stakeAmount1 + expectedReward;
-      const postRewardTotalStake = totalStake + REWARD_AMOUNT;
-      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / postRewardTotalStake;
-      const expectedSlash = (slashRatio * postRewardStake) / PRECISION_FACTOR;
+      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+      const expectedSlash = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
 
       // Check pending slash
       const pendingSlash = await zenVault.getPendingSlash(user1.address);
-      expect(pendingSlash).to.be.closeTo(expectedSlash, 1000n); // Allow small rounding difference
+      expect(pendingSlash).to.equal(expectedSlash);
     });
 
     it("should handle getPendingSlash with zero stake", async function () {
@@ -194,7 +189,7 @@ describe("ZenVault View Function Tests", function () {
 
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
-      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n); // Allow small rounding difference
+      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n);
     });
 
     it("should handle zero stake", async function () {
@@ -224,7 +219,7 @@ describe("ZenVault View Function Tests", function () {
 
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
-      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n); // Allow small rounding difference
+      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n);
     });
 
     it("should handle case where rewards exceed slashes", async function () {
@@ -241,7 +236,7 @@ describe("ZenVault View Function Tests", function () {
 
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
-      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n); // Allow small rounding difference
+      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n);
     });
 
     it("should handle multiple rewards and slashes", async function () {
@@ -258,7 +253,7 @@ describe("ZenVault View Function Tests", function () {
 
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
-      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n); // Allow small rounding difference
+      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n);
     });
   });
 

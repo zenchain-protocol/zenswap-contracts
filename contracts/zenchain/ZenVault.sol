@@ -633,6 +633,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         return userSlashableStake * slashOutstanding / PRECISION_FACTOR;
     }
 
+    // TODO: this should account for slashes being applied before rewards
     /**
      * @notice Calculates an estimated value of the total stake including all pending rewards and slashes
      * @dev Returns an approximation of what the total stake will be once all pending rewards and
