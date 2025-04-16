@@ -176,6 +176,13 @@ interface IZenVault {
     function totalStake() external view returns (uint256);
 
     /**
+     * @notice Returns the total amount of tokens staked in the vault that is eligible for slashing
+     * @dev This value represents the sum of all user stakes, plus unlocking chunks within the bonding duration
+     * @return The total staked amount in the vault
+     */
+    function totalSlashableStake() external view returns (uint256);
+
+    /**
      * @notice Returns the current staked balance for a user
      * @dev Retrieves the total amount of tokens actively staked by an account, excluding pending rewards and slashes
      * @param account The address of the staker

@@ -3,7 +3,7 @@ import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 import {
   createMultipleUnlockingChunks,
-  setupLargeNumberOfStakers,
+  setupStakers,
   setupTestEnvironment
 } from "./utils";
 import {expect} from "chai";
@@ -95,71 +95,45 @@ describe("ZenVault Gas Tests", function () {
     console.log(`Gas used for partial unstake: ${receipt?.gasUsed}`);
   });
 
-  it("should test gas costs with a large number of stakers for recordEraStake", async function () {
+  it("should test gas costs for distributeRewards", async function () {
     // Setup stakers
-    const numStakers = 100;
-    await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
-
-    // Measure gas used for recordEraStake
-    const tx = await zenVault.recordEraStake();
-    const receipt = await tx.wait();
-
-    console.log(`Gas used for recordEraStake with ${numStakers} stakers: ${receipt?.gasUsed}`);
-  });
-
-  it("should test gas costs with a large number of stakers for distributeRewards", async function () {
-    // Setup stakers
-    const numStakers = 100;
-    await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
-
-    // Record era stake
-    await zenVault.recordEraStake();
+    const numStakers = 10;
+    await setupStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
 
     // Measure gas used for distributeRewards
-    const tx = await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT, INITIAL_ERA);
+    const tx = await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
     const receipt = await tx.wait();
 
-    console.log(`Gas used for distributeRewards with ${numStakers} stakers: ${receipt?.gasUsed}`);
+    console.log(`Gas used for distributeRewards: ${receipt?.gasUsed}`);
   });
 
-  it("should test gas costs with a large number of stakers for doSlash (no unlock chunks)", async function () {
+  it("should test gas costs for doSlash (no unlock chunks)", async function () {
     // Setup stakers
-    const numStakers = 100;
-    await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
-
-    // Record era stake
-    await zenVault.recordEraStake();
+    const numStakers = 10;
+    await setupStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
 
     // Measure gas used for doSlash
-    const tx = await zenVault.connect(owner).doSlash(SLASH_AMOUNT, INITIAL_ERA);
+    const tx = await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
     const receipt = await tx.wait();
 
-    console.log(`Gas used for doSlash with ${numStakers} staked stakers: ${receipt?.gasUsed}`);
+    console.log(`Gas used for doSlash: ${receipt?.gasUsed}`);
   });
 
-  it("should test gas costs with a large number of stakers for doSlash (each with staked balance + 2 unlocking chunks)", async function () {
-    // Setup stakers
-    const numStakers = 100;
-    const stakers = await setupLargeNumberOfStakers(numStakers, lpToken, zenVault, INITIAL_SUPPLY, STAKE_AMOUNT);
+  it("should test gas costs for updateUserState", async function () {
+    // Setup a user with stake
+    await lpToken.mint(user1.address, INITIAL_SUPPLY);
+    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
+    await zenVault.connect(user1).stake(STAKE_AMOUNT);
 
-    // Record era stake
-    await zenVault.recordEraStake();
+    // Add some rewards and slashes
+    await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+    await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
 
-    // calculate unrealistically big slash
-    const totalStake = await zenVault.totalStake();
-    const slashAmount = totalStake * 80n / 100n;
-
-    // unstake each staker, keeping 1/3 staked balance and 1/3 in each of two unlocking chunks
-    for (const staker of stakers) {
-      await zenVault.connect(staker).unstake(STAKE_AMOUNT / 3n);
-      await zenVault.connect(staker).unstake(STAKE_AMOUNT / 3n);
-    }
-
-    // Measure gas used for doSlash
-    const tx = await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
+    // Measure gas used for updateUserState
+    const tx = await zenVault.connect(user1).updateUserState();
     const receipt = await tx.wait();
 
-    console.log(`Gas used for doSlash with ${numStakers} unstaking stakers: ${receipt?.gasUsed}`);
+    console.log(`Gas used for updateUserState: ${receipt?.gasUsed}`);
   });
 
   it("should test gas costs with a large number of unlocking chunks for withdrawUnlocked", async function () {

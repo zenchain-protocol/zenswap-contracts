@@ -51,7 +51,6 @@ describe("ZenVault MinStake Tests", function () {
     it("should allow staking exactly minStake", async function () {
       await zenVault.connect(user1).stake(DEFAULT_MIN_STAKE);
       expect(await zenVault.stakedBalances(user1.address)).to.equal(DEFAULT_MIN_STAKE);
-      expect(await zenVault.getCurrentStakers()).to.contain(user1.address);
     });
 
     it("should not allow staking less than minStake", async function () {
@@ -88,7 +87,7 @@ describe("ZenVault MinStake Tests", function () {
       expect(remainingBalance).to.equal(DEFAULT_MIN_STAKE);
     });
 
-    it("should allow unstaking after removal from stakers list", async function () {
+    it("should allow unstaking with higher minStake than initial stake", async function () {
       // set min stake above user staked balance
       const newMinStake = stakeAmount + ethers.parseEther("1");
       await zenVault.connect(owner).setMinStake(newMinStake);
@@ -98,77 +97,20 @@ describe("ZenVault MinStake Tests", function () {
       expect(stakedBalance).to.be.lt(newMinStake);
       expect(stakedBalance).to.equal(stakeAmount);
 
-      // verify user not in stakers
-      const stakers = await zenVault.getCurrentStakers();
-      expect(stakers).not.to.contain(user1.address);
-
       // unstake
       await zenVault.connect(user1).unstake(stakeAmount);
       expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
     });
 
-    it("should not allow unstaking that leaves balance between 0 and minStake", async function () {
-      const unstakeAmount = stakeAmount - ethers.parseEther("0.5"); // Leaves 0.5 ETH, which is below minStake
+    it("should not allow unstaking to a balance between zero and minStake", async function () {
+      const minStake = await zenVault.minStake();
+      const unstakeAmount = stakeAmount - minStake + 1n;
       await expect(zenVault.connect(user1).unstake(unstakeAmount))
         .to.be.revertedWith("Remaining staked balance must either be zero or at least minStake");
     });
   });
 
-  describe("removeFromStakers function", function () {
-    const stakeAmount = ethers.parseEther("10");
-
-    beforeEach(async function () {
-      // Stake tokens first
-      await zenVault.connect(user1).stake(stakeAmount);
-      await zenVault.connect(user2).stake(stakeAmount);
-    });
-
-    it("should remove user from stakers when fully unstaked", async function () {
-      // Verify user1 is in stakers list before unstaking
-      const stakersBeforeUnstake = await zenVault.getCurrentStakers();
-      expect(stakersBeforeUnstake).contains(user1.address);
-
-      // Fully unstake for user1
-      await zenVault.connect(user1).unstake(stakeAmount);
-
-      // Verify user1 is NOT in stakers list after unstaking
-      const stakersAfterUnstake = await zenVault.getCurrentStakers();
-      expect(stakersAfterUnstake).to.not.contain(user1.address);
-    });
-
-    it("should not remove user from stakers when balance remains above minStake", async function () {
-      // Record era stake to capture current stakers
-      await zenVault.recordEraStake();
-
-      // Verify user1 is in stakers list before unstaking
-      const stakersBeforeUnstake = await zenVault.getCurrentStakers();
-      expect(stakersBeforeUnstake).contains(user1.address);
-
-      // Partially unstake for user1, leaving more than minStake
-      const unstakeAmount = stakeAmount - DEFAULT_MIN_STAKE - ethers.parseEther("0.1");
-      await zenVault.connect(user1).unstake(unstakeAmount);
-
-      // Verify user1 remains in stakers list after unstaking
-      const stakersAfterUnstake = await zenVault.getCurrentStakers();
-      expect(stakersAfterUnstake).contains(user1.address);
-
-      // Advance era and record new era stake
-      await mockStakingPrecompile.advanceEra(1);
-      await zenVault.recordEraStake();
-
-      // Verify user1 remains in stakers list after recordEraStake
-      const stakersAfterRecordEraStake = await zenVault.getCurrentStakers();
-      expect(stakersAfterRecordEraStake).contains(user1.address);
-
-      // Get new era exposures
-      const newExposures = await zenVault.getEraExposures(INITIAL_ERA + 1);
-      expect(newExposures.length).to.equal(2); // Both users should still be in stakers
-
-      // Verify user1 is still in the stakers list
-      const user1Found = newExposures.some(exposure => exposure.staker === user1.address);
-      expect(user1Found).to.be.true;
-    });
-  });
+  // The stakers list and removeFromStakers function have been removed in the new contract version
 
   describe("setMinStake function", function () {
     const stakeAmount = ethers.parseEther("5");
@@ -224,22 +166,11 @@ describe("ZenVault MinStake Tests", function () {
       expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount - validUnstakeAmount);
     });
 
-    it("should remove users from stakers array whose stake is below minStake", async function () {
-      // User1 has 5 ETH staked
-
-      // Increase minStake to 3 ETH
-      const newMinStake = ethers.parseEther("3");
-      await zenVault.connect(owner).setMinStake(newMinStake);
-
-      // Try to unstake leaving 2.5 ETH (now below minStake)
-      const unstakeAmount = ethers.parseEther("2.5");
-      await expect(zenVault.connect(user1).unstake(unstakeAmount))
-        .to.be.revertedWith("Remaining staked balance must either be zero or at least minStake");
-
-      // Try to unstake leaving 3.5 ETH (above new minStake)
-      const validUnstakeAmount = ethers.parseEther("1.5");
-      await zenVault.connect(user1).unstake(validUnstakeAmount);
-      expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount - validUnstakeAmount);
+    it("should emit MinStakeSet event", async function () {
+      const newMinStake = ethers.parseEther("2");
+      await expect(zenVault.connect(owner).setMinStake(newMinStake))
+        .to.emit(zenVault, "MinStakeSet")
+        .withArgs(newMinStake);
     });
 
     it("should not allow minStake of 0", async function () {

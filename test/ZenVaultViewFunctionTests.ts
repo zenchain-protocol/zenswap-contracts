@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
-import {setupTestEnvironment} from "./utils";
+import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("ZenVault View Function Tests", function () {
@@ -44,38 +44,6 @@ describe("ZenVault View Function Tests", function () {
     // Stake tokens
     await zenVault.connect(user1).stake(stakeAmount1);
     await zenVault.connect(user2).stake(stakeAmount2);
-
-    // Record era stake
-    await zenVault.recordEraStake();
-  });
-
-  it("getStakerExposuresForEras should return correct data", async function () {
-    // Advance to era 2 and record again
-    await mockStakingPrecompile.advanceEra(1);
-    await zenVault.recordEraStake();
-
-    // Verify getStakerExposuresForEras returns correct data for multiple eras
-    const exposures = await zenVault.getStakerExposuresForEras(user1.address, [INITIAL_ERA, INITIAL_ERA + 1]);
-    expect(exposures.length).to.equal(2);
-    expect(exposures[0]).to.equal(stakeAmount1);
-    expect(exposures[1]).to.equal(stakeAmount1);
-  });
-
-  it("getEraExposures should return correct data", async function () {
-    // Verify getEraExposures returns correct data
-    const eraExposures = await zenVault.getEraExposures(INITIAL_ERA);
-    expect(eraExposures.length).to.equal(2);
-
-    // Check that both users are included with correct amounts
-    const user1Included = eraExposures.some(exposure => 
-      exposure.staker === user1.address && exposure.value == stakeAmount1
-    );
-    const user2Included = eraExposures.some(exposure => 
-      exposure.staker === user2.address && exposure.value == stakeAmount2
-    );
-
-    expect(user1Included).to.be.true;
-    expect(user2Included).to.be.true;
   });
 
   it("getUserUnlockingChunks should return correct data", async function () {
@@ -92,5 +60,72 @@ describe("ZenVault View Function Tests", function () {
     expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);
     expect(unlockingChunks[1].value).to.equal(chunk2);
     expect(unlockingChunks[1].era).to.equal(INITIAL_ERA + BONDING_DURATION);
+  });
+
+  it("getPendingRewards should return correct data", async function () {
+    // Distribute rewards but don't update user state
+    await zenVault.connect(user1).stake(stakeAmount1);
+    const totalStake = stakeAmount1 * 2n + stakeAmount2;
+    const rewardAmount = ethers.parseEther("30");
+
+    // Set reward account and distribute rewards
+    const owner = (await ethers.getSigners())[0];
+    const rewardAccount = (await ethers.getSigners())[1];
+    await zenVault.connect(owner).setRewardAccount(rewardAccount.address);
+    await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), rewardAmount);
+    await zenVault.connect(owner).distributeRewards(rewardAmount);
+
+    // Calculate expected pending rewards
+    const rewardRatio = rewardAmount * PRECISION_FACTOR / totalStake;
+    const expectedReward = (rewardRatio * stakeAmount1 * 2n) / PRECISION_FACTOR;
+
+    // Check pending rewards
+    const pendingRewards = await zenVault.getPendingRewards(user1.address);
+    expect(pendingRewards).to.equal(expectedReward);
+  });
+
+  it("getPendingSlash should return correct data", async function () {
+    // Apply slash but don't update user state
+    const slashAmount = ethers.parseEther("30");
+    const owner = (await ethers.getSigners())[0];
+
+    // Stake more to have a predictable total stake
+    await zenVault.connect(user1).stake(stakeAmount1);
+    const totalStake = stakeAmount1 * 2n + stakeAmount2;
+
+    // Apply slash
+    await zenVault.connect(owner).doSlash(slashAmount);
+
+    // Calculate expected pending slash
+    const slashRatio = slashAmount * PRECISION_FACTOR / totalStake;
+    const expectedSlash = (slashRatio * stakeAmount1 * 2n) / PRECISION_FACTOR;
+
+    // Check pending slash
+    const pendingSlash = await zenVault.getPendingSlash(user1.address);
+    expect(pendingSlash).to.equal(expectedSlash);
+  });
+
+  it("getApproximatePendingTotalStake should return correct data", async function () {
+    // Apply rewards and slashes
+    const rewardAmount = ethers.parseEther("30");
+    const slashAmount = ethers.parseEther("10");
+    const owner = (await ethers.getSigners())[0];
+    const rewardAccount = (await ethers.getSigners())[1];
+
+    // Set reward account and distribute rewards
+    await zenVault.connect(owner).setRewardAccount(rewardAccount.address);
+    await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), rewardAmount);
+    await zenVault.connect(owner).distributeRewards(rewardAmount);
+
+    // Apply slash
+    await zenVault.connect(owner).doSlash(slashAmount);
+
+    // Calculate expected approximate total stake
+    const totalStake = stakeAmount1 + stakeAmount2;
+    const expectedApproxTotalStake = totalStake + rewardAmount - slashAmount;
+
+    // Check approximate pending total stake
+    const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
+    expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n); // Allow small rounding difference
   });
 });

@@ -1,8 +1,8 @@
-import { expect } from "chai";
-import { ethers } from "hardhat";
-import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
-import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
-import { PRECISION_FACTOR, setupTestEnvironment } from "./utils";
+import {expect} from "chai";
+import {ethers} from "hardhat";
+import {MockStakingPrecompile, MockToken, ZenVault} from "../typechain-types";
+import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
+import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 
 describe("ZenVault MinStake Complex Tests", function () {
   // Contracts
@@ -46,7 +46,7 @@ describe("ZenVault MinStake Complex Tests", function () {
   });
 
   describe("Slashing and minStake", function () {
-    it("should remove user from stakers when balance falls below minStake after slashing", async function () {
+    it("should apply slash to user with balance below minStake", async function () {
       // Set initial minStake to a low value
       const initialMinStake = ethers.parseEther("0.1");
       await zenVault.connect(owner).setMinStake(initialMinStake);
@@ -54,83 +54,26 @@ describe("ZenVault MinStake Complex Tests", function () {
       // Stake a small amount
       const stakeAmount = ethers.parseEther("0.5"); // 0.5 ETH
       await zenVault.connect(user1).stake(stakeAmount);
-
-      // Verify user is in stakers list
-      const stakersBeforeSlash = await zenVault.getCurrentStakers();
-      expect(stakersBeforeSlash).to.contain(user1.address);
-
-      // Record era stake
-      await zenVault.recordEraStake();
 
       // Increase minStake above user's balance
       const newMinStake = ethers.parseEther("1"); // Higher than user's stake
       await zenVault.connect(owner).setMinStake(newMinStake);
 
-      // Apply a small slash to trigger the removal
+      // Apply a small slash
       const slashAmount = ethers.parseEther("0.1");
-      await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
+      await zenVault.connect(owner).doSlash(slashAmount);
+      await zenVault.connect(user1).updateUserState();
 
-      // Verify user's balance is below the new minStake
+      // Verify user's balance is reduced by the slash
       const balanceAfterSlash = await zenVault.stakedBalances(user1.address);
-      expect(balanceAfterSlash).to.be.lt(newMinStake);
-
-      // Verify user is removed from stakers list
-      const stakersAfterSlash = await zenVault.getCurrentStakers();
-      expect(stakersAfterSlash).to.not.contain(user1.address);
-    });
-
-    it("should not include users with balance < minStake in era exposures after slashing", async function () {
-      // Set initial minStake to a low value
-      const initialMinStake = ethers.parseEther("0.1");
-      await zenVault.connect(owner).setMinStake(initialMinStake);
-
-      // Stake amounts for two users
-      const stakeAmount1 = ethers.parseEther("0.5"); // 0.5 ETH
-      const stakeAmount2 = ethers.parseEther("10"); // 10 ETH
-
-      await zenVault.connect(user1).stake(stakeAmount1);
-      await zenVault.connect(user2).stake(stakeAmount2);
-
-      // Record era stake for initial era
-      await zenVault.recordEraStake();
-
-      // Verify both users are in era exposures
-      const initialEraExposures = await zenVault.getEraExposures(INITIAL_ERA);
-      expect(initialEraExposures.length).to.equal(2);
-      expect(initialEraExposures.some(e => e.staker === user1.address)).to.be.true;
-      expect(initialEraExposures.some(e => e.staker === user2.address)).to.be.true;
-
-      // Increase minStake above user1's balance
-      const newMinStake = ethers.parseEther("1"); // Higher than user1's stake
-      await zenVault.connect(owner).setMinStake(newMinStake);
-
-      // Apply a small slash to trigger the removal
-      const slashAmount = ethers.parseEther("0.1");
-      await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
-
-      // Verify user1's balance is below the new minStake
-      const balanceAfterSlash = await zenVault.stakedBalances(user1.address);
-      expect(balanceAfterSlash).to.be.lt(newMinStake);
-
-      // Advance era and record new era stake
-      await mockStakingPrecompile.advanceEra(1);
-      await zenVault.recordEraStake();
-
-      // Get new era exposures
-      const newEraExposures = await zenVault.getEraExposures(INITIAL_ERA + 1);
-
-      // Check if user1 is in the exposures
-      const user1InExposures = newEraExposures.some(e => e.staker === user1.address && e.value > 0);
-      expect(user1InExposures).to.be.false;
-
-      // Verify user2 is still in exposures
-      const user2InExposures = newEraExposures.some(e => e.staker === user2.address);
-      expect(user2InExposures).to.be.true;
+      const slashRatio = slashAmount * PRECISION_FACTOR / stakeAmount;
+      const expectedSlash = (slashRatio * stakeAmount) / PRECISION_FACTOR;
+      expect(balanceAfterSlash).to.equal(stakeAmount - expectedSlash);
     });
   });
 
   describe("Rewards and minStake", function () {
-    it("should add user back to stakers when rewards bring balance above minStake", async function () {
+    it("should apply rewards to user with balance below minStake", async function () {
       // Set initial minStake to a low value
       const initialMinStake = ethers.parseEther("0.1");
       await zenVault.connect(owner).setMinStake(initialMinStake);
@@ -138,38 +81,24 @@ describe("ZenVault MinStake Complex Tests", function () {
       // Stake a small amount
       const stakeAmount = ethers.parseEther("0.5"); // 0.5 ETH
       await zenVault.connect(user1).stake(stakeAmount);
-
-      // Record era stake
-      await zenVault.recordEraStake();
 
       // Increase minStake above user1's balance
       const newMinStake = ethers.parseEther("0.6");
       await zenVault.connect(owner).setMinStake(newMinStake);
 
       // Verify user1's balance is below the new minStake
-      const balanceAfterSetMinStake = await zenVault.stakedBalances(user1.address);
-      expect(balanceAfterSetMinStake).to.be.lt(newMinStake);
+      const balanceBeforeReward = await zenVault.stakedBalances(user1.address);
+      expect(balanceBeforeReward).to.be.lt(newMinStake);
 
-      // Verify user1 is no longer in stakers list
-      const stakersAfterSetMinStake = await zenVault.getCurrentStakers();
-      expect(stakersAfterSetMinStake).not.to.contain(user1.address);
-
-      // Advance era and record new era stake
-      await mockStakingPrecompile.advanceEra(1);
-      await zenVault.recordEraStake();
-
-      // Distribute rewards for the initial era
+      // Distribute rewards
       // Use a large reward to ensure it brings balance above minStake
       const bigRewardAmount = ethers.parseEther("100");
-      await zenVault.connect(owner).distributeRewards(bigRewardAmount, INITIAL_ERA);
+      await zenVault.connect(owner).distributeRewards(bigRewardAmount);
+      await zenVault.connect(user1).updateUserState();
 
       // Verify user1's balance is now at least minStake
       const balanceAfterReward = await zenVault.stakedBalances(user1.address);
-      expect(balanceAfterReward).to.be.gte(newMinStake);
-
-      // Verify user1 is added back to stakers list
-      const stakersAfterReward = await zenVault.getCurrentStakers();
-      expect(stakersAfterReward).to.contain(user1.address);
+      expect(balanceAfterReward).to.be.gt(balanceBeforeReward);
     });
   });
 
@@ -188,24 +117,9 @@ describe("ZenVault MinStake Complex Tests", function () {
       // Verify stake was successful
       expect(await zenVault.stakedBalances(user1.address)).to.equal(tinyStake);
 
-      // Verify user is in stakers list
-      const stakersAfterStake = await zenVault.getCurrentStakers();
-      expect(stakersAfterStake).to.contain(user1.address);
-
-      // Record era stake
-      await zenVault.recordEraStake();
-
-      // Verify user has exposure in the era
-      const eraExposures = await zenVault.getEraExposures(INITIAL_ERA);
-      expect(eraExposures.length).to.equal(1);
-
       // Verify user can unstake
       await zenVault.connect(user1).unstake(tinyStake);
       expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
-
-      // Verify user is no longer in stakers list
-      const stakersAfterUnstake = await zenVault.getCurrentStakers();
-      expect(stakersAfterUnstake).not.to.contain(user1.address);
 
       // Verify unlocking chunks were created
       const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
@@ -244,24 +158,15 @@ describe("ZenVault MinStake Complex Tests", function () {
       const stakeAmount = ethers.parseEther("5");
       await zenVault.connect(user1).stake(stakeAmount);
 
-      // Verify user is in stakers list
-      let stakers = await zenVault.getCurrentStakers();
-      expect(stakers).to.contain(user1.address);
-
-      // Record era stake with current minStake
-      await zenVault.recordEraStake();
-
-      // Verify user is in era exposures
-      let eraExposures = await zenVault.getEraExposures(INITIAL_ERA);
-      expect(eraExposures.some(e => e.staker === user1.address)).to.be.true;
+      // Verify user's stake
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount);
 
       // Increase minStake above user's balance
       const highMinStake = ethers.parseEther("10");
       await zenVault.connect(owner).setMinStake(highMinStake);
 
-      // Verify user is removed from stakers list
-      stakers = await zenVault.getCurrentStakers();
-      expect(stakers).to.not.contain(user1.address);
+      // Verify user's stake is unchanged
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(stakeAmount);
     });
   });
 });

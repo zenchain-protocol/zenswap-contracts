@@ -123,7 +123,7 @@ export async function createAndFundAccounts(
  * @param stakeAmount - The amount of LP tokens each account will stake
  * @returns An array of SignerWithAddress objects representing the staker accounts
  */
-export async function setupLargeNumberOfStakers(
+export async function setupStakers(
   numStakers: number,
   lpToken: MockToken,
   zenVault: ZenVault,

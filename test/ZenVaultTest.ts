@@ -136,6 +136,19 @@ describe("ZenVault", function () {
       expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);
     });
 
+    it("should allow users to unstake full staked balance", async function () {
+      await zenVault.connect(user1).unstake(stakeAmount);
+
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(0n);
+      expect(await zenVault.totalStake()).to.equal(0n);
+
+      // Check that the tokens are in the unlocking state
+      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      expect(unlockingChunks.length).to.equal(1);
+      expect(unlockingChunks[0].value).to.equal(stakeAmount);
+      expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);
+    });
+
     it("should emit Unstaked event when unstaking", async function () {
       const unstakeAmount = ethers.parseEther("50");
       await expect(zenVault.connect(user1).unstake(unstakeAmount))
@@ -144,7 +157,8 @@ describe("ZenVault", function () {
     });
 
     it("should not allow unstaking more than staked balance", async function () {
-      const unstakeAmount = ethers.parseEther("150"); // More than staked
+      const unstakeAmount = ethers.parseEther("150");
+      expect(unstakeAmount).to.be.gt(stakeAmount);
       await expect(zenVault.connect(user1).unstake(unstakeAmount))
         .to.be.revertedWith("Insufficient staked balance.");
     });
@@ -156,7 +170,7 @@ describe("ZenVault", function () {
 
     it("should not allow withdrawing before unstaking", async function () {
       await expect(zenVault.connect(user1).withdrawUnlocked())
-        .to.be.revertedWith("No unlocking chunks found for caller.");
+        .to.be.revertedWith("Nothing to withdraw.");
     });
   });
 
@@ -229,68 +243,6 @@ describe("ZenVault", function () {
     });
   });
 
-  describe("Era Stake Recording", function () {
-    const stakeAmount1 = ethers.parseEther("100");
-    const stakeAmount2 = ethers.parseEther("200");
-
-    beforeEach(async function () {
-      // Approve and stake
-      await lpToken.connect(user1).approve(await zenVault.getAddress(), stakeAmount1);
-      await lpToken.connect(user2).approve(await zenVault.getAddress(), stakeAmount2);
-      await zenVault.connect(user1).stake(stakeAmount1);
-      await zenVault.connect(user2).stake(stakeAmount2);
-    });
-
-    it("should record era stake correctly", async function () {
-      // Record era stake
-      await zenVault.recordEraStake();
-
-      // Check that era stake was recorded
-      expect(await zenVault.totalStakeAtEra(INITIAL_ERA)).to.equal(stakeAmount1 + stakeAmount2);
-      expect(await zenVault.lastEraUpdate()).to.equal(INITIAL_ERA);
-
-      // Check era exposures
-      const eraExposures = await zenVault.getEraExposures(INITIAL_ERA);
-      expect(eraExposures.length).to.equal(2);
-
-      // Check that user exposures were recorded
-      const user1Exposures = await zenVault.getStakerExposuresForEras(user1.address, [INITIAL_ERA]);
-      const user2Exposures = await zenVault.getStakerExposuresForEras(user2.address, [INITIAL_ERA]);
-      expect(user1Exposures[0]).to.equal(stakeAmount1);
-      expect(user2Exposures[0]).to.equal(stakeAmount2);
-    });
-
-    it("should emit EraExposureRecorded event", async function () {
-      await expect(zenVault.recordEraStake())
-        .to.emit(zenVault, "EraExposureRecorded")
-        .withArgs(INITIAL_ERA, stakeAmount1 + stakeAmount2);
-    });
-
-    it("should not allow recording era stake twice in the same era", async function () {
-      // Record era stake
-      await zenVault.recordEraStake();
-
-      // Try to record again in the same era
-      await expect(zenVault.recordEraStake())
-        .to.be.revertedWith("Era exposures have been finalized for the current era.");
-    });
-
-    it("should allow recording era stake in a new era", async function () {
-      // Record era stake
-      await zenVault.recordEraStake();
-
-      // Advance era
-      await mockStakingPrecompile.advanceEra(1);
-
-      // Record era stake again
-      await zenVault.recordEraStake();
-
-      // Check that era stake was recorded for the new era
-      expect(await zenVault.totalStakeAtEra(INITIAL_ERA + 1)).to.equal(stakeAmount1 + stakeAmount2);
-      expect(await zenVault.lastEraUpdate()).to.equal(INITIAL_ERA + 1);
-    });
-  });
-
   describe("Reward Distribution", function () {
     const stakeAmount1 = ethers.parseEther("100");
     const stakeAmount2 = ethers.parseEther("200");
@@ -303,20 +255,21 @@ describe("ZenVault", function () {
       await zenVault.connect(user1).stake(stakeAmount1);
       await zenVault.connect(user2).stake(stakeAmount2);
 
-      // Record era stake
-      await zenVault.recordEraStake();
-
       // Approve reward account to transfer rewards
       await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), rewardAmount);
     });
 
     it("should distribute rewards proportionally", async function () {
       // Distribute rewards
-      await zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA);
+      await zenVault.connect(owner).distributeRewards(rewardAmount);
+
+      // update user states
+      await zenVault.connect(user1).updateUserState();
+      await zenVault.connect(user2).updateUserState();
 
       // Calculate expected rewards
       const totalStake = stakeAmount1 + stakeAmount2;
-      const rewardRatio = rewardAmount * PRECISION_FACTOR/ totalStake;
+      const rewardRatio = rewardAmount * PRECISION_FACTOR / totalStake;
       const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
       const expectedReward2 = (rewardRatio * stakeAmount2) / PRECISION_FACTOR;
 
@@ -326,41 +279,42 @@ describe("ZenVault", function () {
       expect(await zenVault.totalStake()).to.equal(totalStake + rewardAmount);
     });
 
-    it("should emit VaultRewardsDistributed event", async function () {
-      // Calculate expected rewards
+    it("should emit VaultRewardsAdded event", async function () {
+      // Calculate expected reward ratio
       const totalStake = stakeAmount1 + stakeAmount2;
-      const rewardRatio = rewardAmount * PRECISION_FACTOR/ totalStake;
-      const expectedReward1 = (rewardRatio * stakeAmount1) / PRECISION_FACTOR;
-      const expectedReward2 = (rewardRatio * stakeAmount2) / PRECISION_FACTOR;
+      const rewardRatio = rewardAmount * PRECISION_FACTOR / totalStake;
+      // This is the first reward distribution, and each distribution adds the next rewardRatio to cumulativeRewardPerShare
+      const cumulativeRewardPerShare = rewardRatio;
 
       // call distributeRewards
-      await expect(zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA))
-        .to.emit(zenVault, "VaultRewardsDistributed")
-        .withArgs(INITIAL_ERA, rewardAmount, [
-          [
-            user1.address,
-            expectedReward1,
-          ],
-          [
-            user2.address,
-            expectedReward2,
-          ]
-        ]);
+      await expect(zenVault.connect(owner).distributeRewards(rewardAmount))
+        .to.emit(zenVault, "VaultRewardsAdded")
+        .withArgs(rewardAmount, cumulativeRewardPerShare, rewardRatio);
     });
 
     it("should not allow non-owners to distribute rewards", async function () {
-      await expect(zenVault.connect(user1).distributeRewards(rewardAmount, INITIAL_ERA))
+      await expect(zenVault.connect(user1).distributeRewards(rewardAmount))
         .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address);
     });
 
     it("should not allow distributing zero rewards", async function () {
-      await expect(zenVault.connect(owner).distributeRewards(0, INITIAL_ERA))
+      await expect(zenVault.connect(owner).distributeRewards(0))
         .to.be.revertedWith("Amount must be greater than zero.");
     });
 
-    it("should not allow distributing rewards for an era with no stake", async function () {
-      await expect(zenVault.connect(owner).distributeRewards(rewardAmount, INITIAL_ERA + 1))
-        .to.be.revertedWith("No stake for this era");
+    it("should not distribute rewards if there are no stakers", async function () {
+      // Create a new ZenVault with no stakers
+      const ZenVaultFactory = await ethers.getContractFactory("ZenVault");
+      const newZenVault = await ZenVaultFactory.deploy(owner.address, await lpToken.getAddress());
+      await newZenVault.connect(owner).setRewardAccount(rewardAccount.address);
+
+      // verify totalStake is 0
+      const totalStake = await newZenVault.totalStake();
+      expect(totalStake).to.equal(0n);
+
+      // Distribute rewards (should revert since totalStake is 0)
+      await expect(newZenVault.connect(owner).distributeRewards(rewardAmount))
+        .to.be.revertedWith("There are no stakers to receive rewards.");
     });
   });
 
@@ -375,14 +329,15 @@ describe("ZenVault", function () {
       await lpToken.connect(user2).approve(await zenVault.getAddress(), stakeAmount2);
       await zenVault.connect(user1).stake(stakeAmount1);
       await zenVault.connect(user2).stake(stakeAmount2);
-
-      // Record era stake
-      await zenVault.recordEraStake();
     });
 
     it("should slash stakers proportionally", async function () {
       // Slash
-      await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
+      await zenVault.connect(owner).doSlash(slashAmount);
+
+      // update user states
+      await zenVault.connect(user1).updateUserState();
+      await zenVault.connect(user2).updateUserState();
 
       // Calculate expected slash amounts
       const totalStake = stakeAmount1 + stakeAmount2;
@@ -396,35 +351,35 @@ describe("ZenVault", function () {
     });
 
     it("should emit VaultSlashed event", async function () {
-      // Calculate expected slash amounts
+      // Calculate expected slash ratio
       const totalStake = stakeAmount1 + stakeAmount2;
       const slashRatio = slashAmount * PRECISION_FACTOR / totalStake;
-      const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
-      const expectedSlash2 = (slashRatio * stakeAmount2) / PRECISION_FACTOR;
+      // This is the first slash, and each slash adds the next slashRatio to cumulativeSlashPerShare
+      const cumulativeSlashPerShare = slashRatio;
 
       // call doSlash
-      await expect(zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA))
+      await expect(zenVault.connect(owner).doSlash(slashAmount))
         .to.emit(zenVault, "VaultSlashed")
-        .withArgs(INITIAL_ERA, slashAmount, [
-          [
-            user1.address,
-            expectedSlash1,
-          ],
-          [
-            user2.address,
-            expectedSlash2,
-          ]
-        ]);
+        .withArgs(slashAmount, cumulativeSlashPerShare, slashRatio);
     });
 
     it("should not allow non-owners to slash", async function () {
-      await expect(zenVault.connect(user1).doSlash(slashAmount, INITIAL_ERA))
+      await expect(zenVault.connect(user1).doSlash(slashAmount))
         .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
 
-    it("should not allow slashing for an era with no stake", async function () {
-      await expect(zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA + 1))
-        .to.be.revertedWith("No stake for this era");
+    it("should not allow slashing when there is no stake", async function () {
+      // Create a new ZenVault with no stakers
+      const ZenVaultFactory = await ethers.getContractFactory("ZenVault");
+      const newZenVault = await ZenVaultFactory.deploy(owner.address, await lpToken.getAddress());
+
+      // verify totalStake is 0
+      const totalStake = await newZenVault.totalStake();
+      expect(totalStake).to.equal(0n);
+
+      // Try to slash with no stake
+      await expect(newZenVault.connect(owner).doSlash(slashAmount))
+        .to.be.revertedWith("No stake to slash.");
     });
 
     it("should slash from unlocking chunks if staked balance is insufficient", async function () {
@@ -432,7 +387,10 @@ describe("ZenVault", function () {
       await zenVault.connect(user1).unstake(stakeAmount1);
 
       // Slash
-      await zenVault.connect(owner).doSlash(slashAmount, INITIAL_ERA);
+      await zenVault.connect(owner).doSlash(slashAmount);
+
+      // update user state
+      await zenVault.connect(user1).updateUserState();
 
       // Calculate expected slash amount for user1
       const totalStake = stakeAmount1 + stakeAmount2;
@@ -530,6 +488,34 @@ describe("ZenVault", function () {
     it("should not allow non-owners to set minStake", async function () {
       const minStake = ethers.parseEther("1");
       await expect(zenVault.connect(user1).setMinStake(minStake))
+        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+    });
+
+    it("should allow owner to set maxUnlockChunks", async function () {
+      // verify default max unlock chunks
+      const initialMaxUnlockChunks = 10;
+      expect(await zenVault.maxUnlockChunks()).to.equal(initialMaxUnlockChunks);
+
+      // set higher max unlock chunks
+      const higherMaxUnlockChunks = 25
+      await zenVault.connect(owner).setMaxUnlockChunks(higherMaxUnlockChunks);
+      expect(await zenVault.maxUnlockChunks()).to.equal(higherMaxUnlockChunks);
+
+      // set minStake back to default
+      await zenVault.connect(owner).setMaxUnlockChunks(initialMaxUnlockChunks);
+      expect(await zenVault.maxUnlockChunks()).to.equal(initialMaxUnlockChunks);
+    });
+
+    it("should emit MaxUnlockChunksSet event", async function () {
+      const maxUnlockChunks = 10;
+      await expect(zenVault.connect(owner).setMaxUnlockChunks(maxUnlockChunks))
+        .to.emit(zenVault, "MaxUnlockChunksSet")
+        .withArgs(maxUnlockChunks);
+    });
+
+    it("should not allow non-owners to set maxUnlockingCHunks", async function () {
+      const maxUnockChunks = 10;
+      await expect(zenVault.connect(user1).setMaxUnlockChunks(maxUnockChunks))
         .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
     });
   });

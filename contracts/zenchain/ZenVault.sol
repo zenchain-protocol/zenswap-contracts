@@ -6,6 +6,7 @@ import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
+import "hardhat/console.sol";
 
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // The liquidity pool token that can be staked in this vault.
@@ -20,6 +21,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // --- STAKE RELATED ---
     // The total amount staked (does not including pending rewards/slashes)
     uint256 public totalStake;
+    // The total amount of slashable stake (includes value of unlocking chunks within bonding period)
+    uint256 public totalSlashableStake;
     // Mapping of user addresses to their staked amounts (excluding pending rewards/slashes).
     mapping(address => uint256) public stakedBalances;
     // Mapping of user addresses to their unlocking balances.
@@ -102,6 +105,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         // Update balance and total stake
         stakedBalances[user] = initialBalance + amount;
         totalStake += amount;
+        totalSlashableStake += amount;
 
         emit Staked(user, amount);
     }
@@ -221,6 +225,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
         // Transfer unlocked tokens to the caller, if any
         if (totalToTransfer > 0) {
+            totalSlashableStake -= totalToTransfer;
             pool.transfer(user, totalToTransfer);
             emit Withdrawal(user, totalToTransfer);
         }
@@ -272,6 +277,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     function distributeRewards(uint256 rewardAmount) external onlyOwner {
         require(rewardAmount > 0, "Amount must be greater than zero.");
         require(rewardAccount != address(0), "Reward account not set.");
+        require(totalStake > 0, "There are no stakers to receive rewards.");
         // check allowance
         uint256 poolAllowance = pool.allowance(rewardAccount, address(this));
         require(poolAllowance >= rewardAmount, "Not enough allowance to transfer rewards from the vault's reward account to the vault.");
@@ -290,36 +296,35 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Allows the owner to slash a portion of the total stake as a penalty
+     * @notice Allows the owner to slash a portion of the total *slashable* stake as a penalty.
      * @dev This function implements the slashing mechanism for the ZenVault:
-     *      - Verifies there is stake to slash
-     *      - Caps the slash amount to the available total stake to prevent underflow
-     *      - Calculates the slash ratio proportionally across all stakers
-     *      - Updates the cumulative slash tracker that's used to apply penalties to stakers
+     * - Verifies there is slashable stake available.
+     * - Caps the slash amount to the available total *slashable* stake.
+     * - Calculates the slash ratio proportionally across all *slashable* stake.
+     * - Updates the cumulative slash tracker used to apply penalties.
+     * - Note: This function does NOT directly decrease totalStake or totalSlashableStake;
+     * those are updated when the slash is applied to individual users via _applySlashToUser.
      *
-     * The slashing is implemented through a global accounting system using cumulative
-     * values. Individual staker balances are not directly modified; instead, the penalties are applied lazily.
-     *
-     * @param slashAmount The amount to slash from the total stake
+     * @param slashAmount The amount to slash from the total *slashable* stake.
      *
      * @custom:requirements
-     *   - Can only be called by the contract owner
-     *   - Total stake must be greater than zero
+     * - Can only be called by the contract owner.
+     * - Total slashable stake must be greater than zero.
      *
      * @custom:modifies
-     *   - cumulativeSlashPerShare - Increases by the slash ratio
+     * - cumulativeSlashPerShare - Increases by the slash ratio based on totalSlashableStake.
      *
      * @custom:emits VaultSlashed(uint256 actualSlashAmount, uint256 cumulativeSlashPerShare, uint256 slashRatio)
      */
     function doSlash(uint256 slashAmount) external onlyOwner {
-        require(totalStake > 0, "No stake to slash.");
+        require(totalSlashableStake > 0, "No stake to slash.");
 
         // Ensure slashAmount doesn't exceed totalStake to avoid totalStake underflow
-        uint256 actualSlashAmount = slashAmount > totalStake ? totalStake : slashAmount;
+        uint256 actualSlashAmount = slashAmount > totalSlashableStake ? totalSlashableStake : slashAmount;
 
         if (actualSlashAmount > 0) {
             // Increase cumulative slash proportionally based on current total stake
-            uint256 slashRatio = actualSlashAmount * PRECISION_FACTOR / totalStake;
+            uint256 slashRatio = actualSlashAmount * PRECISION_FACTOR / totalSlashableStake;
             cumulativeSlashPerShare += slashRatio;
             emit VaultSlashed(actualSlashAmount, cumulativeSlashPerShare, slashRatio);
         }
@@ -347,12 +352,13 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function _applySlashToUser(address user, uint256 slashOutstanding) internal {
         // Slash is proportional to current staked balance
-        uint256 userStakeBeforeSlash = stakedBalances[user];
-        uint256 pendingSlash = userStakeBeforeSlash * slashOutstanding / PRECISION_FACTOR;
+        uint256 userSlashableStake = _getUserSlashableStake(user);
+        uint256 pendingSlash = userSlashableStake * slashOutstanding / PRECISION_FACTOR;
         if (pendingSlash > 0) {
             uint256 remainingSlash = pendingSlash;
 
             // Slash staked balance first
+            uint256 userStakeBeforeSlash = stakedBalances[user];
             uint256 slashedFromStake = 0;
             if (remainingSlash > 0 && userStakeBeforeSlash > 0) {
                 if (userStakeBeforeSlash >= remainingSlash) {
@@ -389,8 +395,33 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
                 }
             }
 
+            // update slashable stake
+            totalSlashableStake = totalSlashableStake - slashedFromStake - slashedFromUnlocking;
+
             emit UserSlashApplied(user, pendingSlash, slashedFromStake, slashedFromUnlocking);
         }
+    }
+
+    /**
+     * @dev Calculates the total slashable stake for a given user.
+     * This includes their active staked balance plus the value of all
+     * unlocking chunks that are still within the bonding period.
+     * @param user The address of the user.
+     * @return The total slashable stake for the user.
+     */
+    function _getUserSlashableStake(address user) internal view returns (uint256) {
+        uint256 slashableStake = stakedBalances[user];
+        uint32 currentEra = nativeStaking.currentEra();
+        UnlockChunk[] memory chunks = unlocking[user];
+        uint256 len = chunks.length;
+        for (uint256 i = 0; i < len; i++) {
+            UnlockChunk memory chunk = chunks[i];
+            if (chunk.era < currentEra) {
+                break;
+            }
+            slashableStake += chunk.value;
+        }
+        return slashableStake;
     }
 
     /**
@@ -416,6 +447,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             if (pendingReward > 0) {
                 stakedBalances[user] += pendingReward;
                 totalStake += pendingReward;
+                totalSlashableStake += pendingReward;
                 emit RewardsRestaked(user, pendingReward);
             }
         }
@@ -583,10 +615,11 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Calculates the total pending slash amount for a user without applying it.
+     * @notice Calculates the total pending slash amount for a user based on their slashable stake, without applying it.
      * @dev This represents the slash amount that would be applied if _updateUserState were called now.
+     * Calculation is based on user's active stake + bonded unlocking chunks.
      * @param user The address of the user to query.
-     * @return totalPendingSlash The total amount of tokens that would be slashed.
+     * @return totalPendingSlash The total amount of tokens that would be slashed from the user's slashable assets.
      */
     function getPendingSlash(address user) external view returns (uint256) {
         // Calculate outstanding slash per share for the user
@@ -595,12 +628,13 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
             return 0;
         }
 
-        uint256 userStake = stakedBalances[user];
-        if (userStake == 0) {
+        // Get the user's total slashable stake
+        uint256 userSlashableStake = _getUserSlashableStake(user);
+        if (userSlashableStake == 0) {
             return 0;
         }
 
-        return userStake * slashOutstanding / PRECISION_FACTOR;
+        return userSlashableStake * slashOutstanding / PRECISION_FACTOR;
     }
 
     /**
@@ -610,12 +644,15 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      and slashes are explicitly applied through distributeRewards or doSlash functions.
      *
      * The calculation uses the formula:
-     *     totalStake * (PRECISION_FACTOR + cumulativeRewardPerShare - cumulativeSlashPerShare) / PRECISION_FACTOR
+     *     (totalStake * (PRECISION_FACTOR + cumulativeRewardPerShare) - totalSlashableStake * cumulativeSlashPerShare) / PRECISION_FACTOR
      *
      * This formula accounts for:
-     * - Accumulated rewards tracked in cumulativeRewardPerShare
-     * - Accumulated slashes tracked in cumulativeSlashPerShare
+     * - The base stake (`totalStake`)
+     * - Accumulated rewards based on `totalStake` (tracked in cumulativeRewardPerShare)
+     * - Accumulated slashes based on `totalSlashableStake` (tracked in cumulativeSlashPerShare)
      * - The precision factor to maintain calculation accuracy
+     *
+     * Note: If pending slashes exceed the base stake plus pending rewards, this calculation may revert due to underflow.
      *
      * @return uint256 The estimated total stake after applying all pending rewards and slashes
      *
@@ -626,6 +663,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *               view of the vault's stake without waiting for reward/slash applications.
      */
     function getApproximatePendingTotalStake() external view returns (uint256) {
-        return totalStake * (PRECISION_FACTOR + cumulativeRewardPerShare - cumulativeSlashPerShare) / PRECISION_FACTOR;
+        uint256 scaledBasePlusRewards = totalStake * (PRECISION_FACTOR + cumulativeRewardPerShare);
+        uint256 scaledPendingSlashes = totalSlashableStake * cumulativeSlashPerShare;
+        return (scaledBasePlusRewards - scaledPendingSlashes) / PRECISION_FACTOR;
     }
 }
