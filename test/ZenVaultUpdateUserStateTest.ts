@@ -1,13 +1,12 @@
 import {expect} from "chai";
 import {ethers} from "hardhat";
-import {MockStakingPrecompile, MockToken, ZenVault} from "../typechain-types";
+import {MockToken, ZenVault} from "../typechain-types";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
 import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 
 describe("ZenVault updateUserState Tests", function () {
   // Contracts
   let zenVault: ZenVault;
-  let mockStakingPrecompile: MockStakingPrecompile;
   let lpToken: MockToken;
 
   // Signers
@@ -33,7 +32,6 @@ describe("ZenVault updateUserState Tests", function () {
       BONDING_DURATION
     );
     zenVault = testEnvironment.zenVault;
-    mockStakingPrecompile = testEnvironment.mockStakingPrecompile;
     lpToken = testEnvironment.lpToken;
     owner = testEnvironment.owner;
     rewardAccount = testEnvironment.rewardAccount;
@@ -48,7 +46,7 @@ describe("ZenVault updateUserState Tests", function () {
     await lpToken.connect(user2).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
   });
 
-  describe("updateUserState function behavior", function () {
+  describe("updateUserState core behavior", function () {
     beforeEach(async function () {
       // Stake tokens
       await zenVault.connect(user1).stake(STAKE_AMOUNT);
@@ -116,6 +114,149 @@ describe("ZenVault updateUserState Tests", function () {
 
       // Verify stake is unchanged
       expect(await zenVault.stakedBalances(user1.address)).to.equal(STAKE_AMOUNT);
+    });
+
+    it("should update userSlashPerShareApplied and userRewardPerSharePaid correctly", async function () {
+      // Distribute rewards
+      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+
+      // Apply slash
+      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
+
+      // Get initial values
+      const initialSlashPerShareApplied = await zenVault.userSlashPerShareApplied(user1.address);
+      const initialRewardPerSharePaid = await zenVault.userRewardPerSharePaid(user1.address);
+      const totalStake = await zenVault.totalStake();
+      const totalSlashableStake = await zenVault.totalSlashableStake();
+
+      // Call updateUserState
+      await zenVault.connect(user1).updateUserState();
+
+      // Get current global values
+      const currentCumulativeSlashPerShare = await zenVault.cumulativeSlashPerShare();
+      const currentCumulativeRewardPerShare = await zenVault.cumulativeRewardPerShare();
+
+      // Verify state variables are updated correctly
+      expect(await zenVault.userSlashPerShareApplied(user1.address)).to.equal(currentCumulativeSlashPerShare);
+      expect(await zenVault.userRewardPerSharePaid(user1.address)).to.equal(currentCumulativeRewardPerShare);
+
+      const expectedRewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+      const changeInRewardPerShare = expectedRewardRatio - initialRewardPerSharePaid;
+      expect(changeInRewardPerShare).to.equal(expectedRewardRatio);
+
+      const expectedSlashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalSlashableStake;
+      const changeInSlashPerShare = expectedSlashRatio - initialSlashPerShareApplied;
+      expect(changeInSlashPerShare).to.equal(expectedSlashRatio);
+    });
+
+    it("should emit RewardsRestaked events when rewards are applied", async function () {
+      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
+      const pendingReward = await zenVault.getPendingRewards(user1.address);
+
+      // Call updateUserState and expect events to be emitted
+      await expect(zenVault.connect(user1).updateUserState())
+        .to.emit(zenVault, "RewardsRestaked").withArgs(user1.address, pendingReward);
+    });
+
+    it("should emit UserSlashApplied events when slashes are applied", async function () {
+      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
+      const pendingSlash = await zenVault.getPendingSlash(user1.address);
+
+      // Call updateUserState and expect events to be emitted
+      await expect(zenVault.connect(user1).updateUserState())
+        .to.emit(zenVault, "UserSlashApplied").withArgs(user1.address, pendingSlash, SLASH_AMOUNT, 0);
+    });
+  });
+
+  describe("updateUserState with multiple users", function () {
+    beforeEach(async function () {
+      // Stake tokens for both users
+      await zenVault.connect(user1).stake(STAKE_AMOUNT);
+      await zenVault.connect(user2).stake(STAKE_AMOUNT);
+    });
+
+    it("should apply rewards to each user independently", async function () {
+      // Distribute rewards
+      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+
+      // Calculate expected reward
+      const totalStake = STAKE_AMOUNT * 2n; // Two users with equal stake
+      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
+      const expectedReward = (rewardRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
+
+      // Update user1's state only
+      await zenVault.connect(user1).updateUserState();
+
+      // Verify user1 received expected rewards
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(STAKE_AMOUNT + expectedReward);
+
+      // Verify user2 did not receive rewards yet
+      expect(await zenVault.stakedBalances(user2.address)).to.equal(STAKE_AMOUNT);
+
+      // Update user2's state
+      await zenVault.connect(user2).updateUserState();
+
+      // Verify user2 received expected rewards
+      expect(await zenVault.stakedBalances(user2.address)).to.equal(STAKE_AMOUNT + expectedReward);
+    });
+
+    it("should apply slashes to each user independently", async function () {
+      // Apply slash
+      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
+
+      // Calculate expected slash
+      const totalStake = STAKE_AMOUNT * 2n; // Two users with equal stake
+      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
+      const expectedSlash = (slashRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
+
+      // Update user1's state only
+      await zenVault.connect(user1).updateUserState();
+
+      // Verify user1 was slashed the expected amount
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(STAKE_AMOUNT - expectedSlash);
+
+      // Verify user2 was not slashed yet
+      expect(await zenVault.stakedBalances(user2.address)).to.equal(STAKE_AMOUNT);
+
+      // Update user2's state
+      await zenVault.connect(user2).updateUserState();
+
+      // Verify user2 was slashed the expected amount
+      expect(await zenVault.stakedBalances(user2.address)).to.equal(STAKE_AMOUNT - expectedSlash);
+    });
+  });
+
+  describe("updateUserState order of operations", function () {
+    beforeEach(async function () {
+      // Stake tokens
+      await zenVault.connect(user1).stake(STAKE_AMOUNT);
+    });
+
+    it("should apply slashes before rewards", async function () {
+      // Distribute rewards first in the contract
+      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+
+      // Apply slash second in the contract
+      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
+
+      // Calculate expected values if slash is applied first
+      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
+      const expectedSlash = (slashRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
+      const postSlashStake = STAKE_AMOUNT - expectedSlash;
+
+      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
+      const expectedReward = (rewardRatio * postSlashStake) / PRECISION_FACTOR;
+
+      const expectedFinalStake = postSlashStake + expectedReward;
+
+      // Call updateUserState
+      await zenVault.connect(user1).updateUserState();
+
+      // Verify final stake
+      const actualBalance = await zenVault.stakedBalances(user1.address);
+      expect(actualBalance).to.equal(expectedFinalStake);
     });
   });
 });
