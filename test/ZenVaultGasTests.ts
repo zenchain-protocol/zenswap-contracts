@@ -140,53 +140,34 @@ describe("ZenVault Gas Tests", function () {
     console.log(`Gas used for updateUserState (small slash, no unlock chunks): ${receipt?.gasUsed}`);
   });
 
-  it("should test gas costs for updateUserState (1 unlock chunk)", async function () {
-    // Setup a user with stake
-    await lpToken.mint(user1.address, INITIAL_SUPPLY);
-    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-    await zenVault.connect(user1).stake(STAKE_AMOUNT);
-    // unstake to create unlocking chunk
-    await zenVault.connect(user1).unstake(STAKE_AMOUNT / 2n);
+  [1, 2, 3, 4, 5, 10].forEach(numChunks => {
+    it(`should test gas costs for updateUserState with ${numChunks} unlock chunk(s)`, async function () {
+      // Setup a user with stake
+      await lpToken.mint(user1.address, INITIAL_SUPPLY);
+      await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
+      await zenVault.connect(user1).stake(STAKE_AMOUNT);
 
-    // Add some rewards and slashes
-    await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
-    const largeSlashAmount = STAKE_AMOUNT * 9n / 10n;
-    await zenVault.connect(owner).doSlash(largeSlashAmount);
+      // Unstake to create unlocking chunks
+      const unstakeAmount = STAKE_AMOUNT / BigInt(numChunks + 1);
+      for (let i = 0; i < numChunks; i++) {
+        await zenVault.connect(user1).unstake(unstakeAmount);
+      }
 
-    // verify unlocking chunks
-    const chunks = await zenVault.getUnlockingChunks(user1.address);
-    expect(chunks.length).to.equal(1);
+      // Add some rewards and slashes
+      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
+      const largeSlashAmount = STAKE_AMOUNT * 99n / 100n;
+      await zenVault.connect(owner).doSlash(largeSlashAmount);
 
-    // Measure gas used for updateUserState
-    const tx = await zenVault.connect(user1).updateUserState();
-    const receipt = await tx.wait();
+      // Verify unlocking chunks
+      const chunks = await zenVault.getUnlockingChunks(user1.address);
+      expect(chunks.length).to.equal(numChunks);
 
-    console.log(`Gas used for updateUserState (1 unlock chunk): ${receipt?.gasUsed}`);
-  });
+      // Measure gas used for updateUserState
+      const tx = await zenVault.connect(user1).updateUserState();
+      const receipt = await tx.wait();
 
-  it("should test gas costs for updateUserState (2 unlock chunks)", async function () {
-    // Setup a user with stake
-    await lpToken.mint(user1.address, INITIAL_SUPPLY);
-    await lpToken.connect(user1).approve(await zenVault.getAddress(), INITIAL_SUPPLY);
-    await zenVault.connect(user1).stake(STAKE_AMOUNT);
-    // unstake to create unlocking chunks
-    await zenVault.connect(user1).unstake(STAKE_AMOUNT / 3n);
-    await zenVault.connect(user1).unstake(STAKE_AMOUNT / 3n);
-
-    // Add some rewards and slashes
-    await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
-    const largeSlashAmount = STAKE_AMOUNT * 9n / 10n;
-    await zenVault.connect(owner).doSlash(largeSlashAmount);
-
-    // verify unlocking chunks
-    const chunks = await zenVault.getUnlockingChunks(user1.address);
-    expect(chunks.length).to.equal(2);
-
-    // Measure gas used for updateUserState
-    const tx = await zenVault.connect(user1).updateUserState();
-    const receipt = await tx.wait();
-
-    console.log(`Gas used for updateUserState (2 unlock chunks): ${receipt?.gasUsed}`);
+      console.log(`Gas used for updateUserState with ${numChunks} unlock chunk(s): ${receipt?.gasUsed}`);
+    });
   });
 
   it("should test gas costs with a large number of unlocking chunks for withdrawUnlocked", async function () {
