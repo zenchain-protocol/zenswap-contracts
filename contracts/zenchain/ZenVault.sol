@@ -6,7 +6,6 @@ import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
-import "hardhat/console.sol";
 
 // TODO: How can I ensure that unlocking chunks outside of the bonding period are not slashable without allowing users to simply wait a couple of eras before applying their slash?
 
