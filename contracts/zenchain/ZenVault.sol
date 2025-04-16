@@ -16,7 +16,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // Affects precision of calculations. Used to prevent integer overflow.
     uint256 constant public PRECISION_FACTOR = 1e18;
     // The ZenChain NativeStaking precompile
-    NativeStaking private nativeStaking = STAKING_CONTRACT;
+    NativeStaking public nativeStaking = STAKING_CONTRACT;
 
     // --- STAKE RELATED ---
     // The total amount staked (does not including pending rewards/slashes)

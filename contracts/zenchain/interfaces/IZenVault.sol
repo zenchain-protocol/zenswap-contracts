@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import '@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol';
+import "../../../precompile-interfaces/INativeStaking.sol";
 
 interface IZenVault {
 
@@ -167,6 +168,13 @@ interface IZenVault {
      */
     function PRECISION_FACTOR() external view returns (uint256);
 
+
+    /**
+     * @notice Returns the NativeStaking precompile contract used by the vault
+     * @dev This contract is used for era tracking and managing staking parameters like bonding duration
+     * @return The NativeStaking precompile interface that handles the native token staking on ZenChain
+     */
+    function nativeStaking() external view returns (NativeStaking);
 
     /**
      * @notice Returns the total amount of tokens staked in the vault

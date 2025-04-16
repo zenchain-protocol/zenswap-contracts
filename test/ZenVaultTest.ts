@@ -172,6 +172,25 @@ describe("ZenVault", function () {
       await expect(zenVault.connect(user1).withdrawUnlocked())
         .to.be.revertedWith("Nothing to withdraw.");
     });
+
+    it("should enforce maxUnlockChunks limit", async function () {
+      // Get current maxUnlockChunks
+      const maxUnlockChunks = await zenVault.maxUnlockChunks();
+
+      // Create maxUnlockChunks unlocking chunks
+      const chunkSize = stakeAmount / (maxUnlockChunks * 2n);
+      for (let i = 0; i < maxUnlockChunks; i++) {
+        await zenVault.connect(user1).unstake(chunkSize);
+      }
+
+      // Verify unlocking chunks length
+      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      expect(unlockingChunks.length).to.equal(Number(maxUnlockChunks));
+
+      // Try to create one more chunk (should fail)
+      await expect(zenVault.connect(user1).unstake(chunkSize))
+        .to.be.revertedWith("Unlocking array length limit reached. Withdraw unlocked tokens before unstaking.");
+    });
   });
 
   describe("Withdrawing Unlocked Tokens", function () {
@@ -401,122 +420,200 @@ describe("ZenVault", function () {
       const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
       expect(unlockingChunks[0].value).to.equal(stakeAmount1 - expectedSlash1);
     });
+
+    it("should handle slashing more than total stake", async function () {
+
+      // Slash more than total stake
+      const totalStake = stakeAmount1 + stakeAmount2;
+      const hugeSlashAmount = totalStake * 2n;
+      await zenVault.connect(owner).doSlash(hugeSlashAmount);
+
+      // Update user states
+      await zenVault.connect(user1).updateUserState();
+      await zenVault.connect(user2).updateUserState();
+
+      // Verify all stake was slashed
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
+      expect(await zenVault.stakedBalances(user2.address)).to.equal(0);
+      expect(await zenVault.totalStake()).to.equal(0);
+    });
+
+    it("should handle slashing exactly total stake", async function () {
+      // Slash exactly total stake
+      const totalStake = stakeAmount1 + stakeAmount2;
+      await zenVault.connect(owner).doSlash(totalStake);
+
+      // Update user states
+      await zenVault.connect(user1).updateUserState();
+      await zenVault.connect(user2).updateUserState();
+
+      // Verify all stake was slashed
+      expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
+      expect(await zenVault.stakedBalances(user2.address)).to.equal(0);
+      expect(await zenVault.totalStake()).to.equal(0);
+    });
   });
 
   describe("Administrative Functions", function () {
-    it("should allow owner to enable/disable staking", async function () {
-      // Disable staking
-      await zenVault.connect(owner).setIsStakingEnabled(false);
-      expect(await zenVault.isStakingEnabled()).to.equal(false);
 
-      // Enable staking
-      await zenVault.connect(owner).setIsStakingEnabled(true);
-      expect(await zenVault.isStakingEnabled()).to.equal(true);
+    describe("setIsStakingEnabled", function () {
+      it("should allow owner to enable/disable staking", async function () {
+        // Disable staking
+        await zenVault.connect(owner).setIsStakingEnabled(false);
+        expect(await zenVault.isStakingEnabled()).to.equal(false);
+
+        // Enable staking
+        await zenVault.connect(owner).setIsStakingEnabled(true);
+        expect(await zenVault.isStakingEnabled()).to.equal(true);
+      });
+
+      it("should emit StakingEnabled event", async function () {
+        await expect(zenVault.connect(owner).setIsStakingEnabled(false))
+          .to.emit(zenVault, "StakingEnabled")
+          .withArgs(false);
+      });
+
+      it("should not allow non-owners to enable/disable staking", async function () {
+        await expect(zenVault.connect(user1).setIsStakingEnabled(false))
+          .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+      });
     });
 
-    it("should emit StakingEnabled event", async function () {
-      await expect(zenVault.connect(owner).setIsStakingEnabled(false))
-        .to.emit(zenVault, "StakingEnabled")
-        .withArgs(false);
+    describe("setIsWithdrawEnabled", function () {
+      it("should allow owner to enable/disable withdrawals", async function () {
+        // Disable withdrawals
+        await zenVault.connect(owner).setIsWithdrawEnabled(false);
+        expect(await zenVault.isWithdrawEnabled()).to.equal(false);
+
+        // Enable withdrawals
+        await zenVault.connect(owner).setIsWithdrawEnabled(true);
+        expect(await zenVault.isWithdrawEnabled()).to.equal(true);
+      });
+
+      it("should emit WithdrawEnabled event", async function () {
+        await expect(zenVault.connect(owner).setIsWithdrawEnabled(false))
+          .to.emit(zenVault, "WithdrawEnabled")
+          .withArgs(false);
+      });
+
+      it("should not allow non-owners to enable/disable withdrawals", async function () {
+        await expect(zenVault.connect(user1).setIsWithdrawEnabled(false))
+          .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+      });
     });
 
-    it("should not allow non-owners to enable/disable staking", async function () {
-      await expect(zenVault.connect(user1).setIsStakingEnabled(false))
-        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+    describe("setRewardAccount", function () {
+      it("should allow owner to set reward account", async function () {
+        // Set new reward account
+        await zenVault.connect(owner).setRewardAccount(user2.address);
+        expect(await zenVault.rewardAccount()).to.equal(user2.address);
+      });
+
+      it("should emit RewardAccountSet event", async function () {
+        await expect(zenVault.connect(owner).setRewardAccount(user2.address))
+          .to.emit(zenVault, "RewardAccountSet")
+          .withArgs(user2.address);
+      });
+
+      it("should not allow non-owners to set reward account", async function () {
+        await expect(zenVault.connect(user1).setRewardAccount(user2.address))
+          .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+      });
     });
 
-    it("should allow owner to enable/disable withdrawals", async function () {
-      // Disable withdrawals
-      await zenVault.connect(owner).setIsWithdrawEnabled(false);
-      expect(await zenVault.isWithdrawEnabled()).to.equal(false);
+    describe("setMinStake", function () {
+      it("should allow owner to set minimum stake threshold", async function () {
+        // verify default min stake
+        const initialMinStake = ethers.parseEther("1");
+        expect(await zenVault.minStake()).to.equal(initialMinStake);
 
-      // Enable withdrawals
-      await zenVault.connect(owner).setIsWithdrawEnabled(true);
-      expect(await zenVault.isWithdrawEnabled()).to.equal(true);
+        // set higher minimum stake
+        const higherMinStake = ethers.parseEther("10");
+        await zenVault.connect(owner).setMinStake(higherMinStake);
+        expect(await zenVault.minStake()).to.equal(higherMinStake);
+
+        // set minStake back to default
+        await zenVault.connect(owner).setMinStake(initialMinStake);
+        expect(await zenVault.minStake()).to.equal(initialMinStake);
+      });
+
+      it("should emit MinStakeSet event", async function () {
+        const minStake = ethers.parseEther("1");
+        await expect(zenVault.connect(owner).setMinStake(minStake))
+          .to.emit(zenVault, "MinStakeSet")
+          .withArgs(minStake);
+      });
+
+      it("should not allow non-owners to set minStake", async function () {
+        const minStake = ethers.parseEther("1");
+        await expect(zenVault.connect(user1).setMinStake(minStake))
+          .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+      });
     });
 
-    it("should emit WithdrawEnabled event", async function () {
-      await expect(zenVault.connect(owner).setIsWithdrawEnabled(false))
-        .to.emit(zenVault, "WithdrawEnabled")
-        .withArgs(false);
+    describe("setMaxUnlockChunks", function () {
+      it("should allow owner to set maxUnlockChunks", async function () {
+        // verify default max unlock chunks
+        const initialMaxUnlockChunks = 10;
+        expect(await zenVault.maxUnlockChunks()).to.equal(initialMaxUnlockChunks);
+
+        // set higher max unlock chunks
+        const higherMaxUnlockChunks = 25
+        await zenVault.connect(owner).setMaxUnlockChunks(higherMaxUnlockChunks);
+        expect(await zenVault.maxUnlockChunks()).to.equal(higherMaxUnlockChunks);
+
+        // set minStake back to default
+        await zenVault.connect(owner).setMaxUnlockChunks(initialMaxUnlockChunks);
+        expect(await zenVault.maxUnlockChunks()).to.equal(initialMaxUnlockChunks);
+      });
+
+      it("should emit MaxUnlockChunksSet event", async function () {
+        const maxUnlockChunks = 10;
+        await expect(zenVault.connect(owner).setMaxUnlockChunks(maxUnlockChunks))
+          .to.emit(zenVault, "MaxUnlockChunksSet")
+          .withArgs(maxUnlockChunks);
+      });
+
+      it("should not allow non-owners to set maxUnlockingCHunks", async function () {
+        const maxUnockChunks = 10;
+        await expect(zenVault.connect(user1).setMaxUnlockChunks(maxUnockChunks))
+          .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+      });
+
+      it("should not allow setting maxUnlockChunks to zero", async function () {
+        await expect(zenVault.connect(owner).setMaxUnlockChunks(0))
+          .to.be.revertedWith("The maximum unlocking array length must be greater than 0.");
+      });
     });
 
-    it("should not allow non-owners to enable/disable withdrawals", async function () {
-      await expect(zenVault.connect(user1).setIsWithdrawEnabled(false))
-        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
-    });
+    describe("setNativeStakingAddress", function () {
+      it("should allow owner to set native staking address", async function () {
+        // verify default native staking address
+        const initialNativeStakingAddress = "0x0000000000000000000000000000000000000800";
+        expect(await zenVault.nativeStaking()).to.equal(initialNativeStakingAddress);
 
-    it("should allow owner to set reward account", async function () {
-      // Set new reward account
-      await zenVault.connect(owner).setRewardAccount(user2.address);
-      expect(await zenVault.rewardAccount()).to.equal(user2.address);
-    });
+        // set new native staking address
+        const newAddress = "0x0000000000000000000000000000000000000801";
+        await zenVault.connect(owner).setNativeStakingAddress(newAddress);
+        expect(await zenVault.nativeStaking()).to.equal(newAddress);
 
-    it("should emit RewardAccountSet event", async function () {
-      await expect(zenVault.connect(owner).setRewardAccount(user2.address))
-        .to.emit(zenVault, "RewardAccountSet")
-        .withArgs(user2.address);
-    });
+        // set native staking address back to default
+        await zenVault.connect(owner).setNativeStakingAddress(initialNativeStakingAddress);
+        expect(await zenVault.nativeStaking()).to.equal(initialNativeStakingAddress);
+      });
 
-    it("should not allow non-owners to set reward account", async function () {
-      await expect(zenVault.connect(user1).setRewardAccount(user2.address))
-        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
-    });
+      it("should emit NativeStakingAddressSet event", async function () {
+        const newAddress = "0x0000000000000000000000000000000000000801";
+        await expect(zenVault.connect(owner).setNativeStakingAddress(newAddress))
+          .to.emit(zenVault, "NativeStakingAddressSet")
+          .withArgs(newAddress);
+      });
 
-    it("should allow owner to set minimum stake threshold", async function () {
-      // verify default min stake
-      const initialMinStake = ethers.parseEther("1");
-      expect(await zenVault.minStake()).to.equal(initialMinStake);
-
-      // set higher minimum stake
-      const higherMinStake = ethers.parseEther("10");
-      await zenVault.connect(owner).setMinStake(higherMinStake);
-      expect(await zenVault.minStake()).to.equal(higherMinStake);
-
-      // set minStake back to default
-      await zenVault.connect(owner).setMinStake(initialMinStake);
-      expect(await zenVault.minStake()).to.equal(initialMinStake);
-    });
-
-    it("should emit MinStakeSet event", async function () {
-      const minStake = ethers.parseEther("1");
-      await expect(zenVault.connect(owner).setMinStake(minStake))
-        .to.emit(zenVault, "MinStakeSet")
-        .withArgs(minStake);
-    });
-
-    it("should not allow non-owners to set minStake", async function () {
-      const minStake = ethers.parseEther("1");
-      await expect(zenVault.connect(user1).setMinStake(minStake))
-        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
-    });
-
-    it("should allow owner to set maxUnlockChunks", async function () {
-      // verify default max unlock chunks
-      const initialMaxUnlockChunks = 10;
-      expect(await zenVault.maxUnlockChunks()).to.equal(initialMaxUnlockChunks);
-
-      // set higher max unlock chunks
-      const higherMaxUnlockChunks = 25
-      await zenVault.connect(owner).setMaxUnlockChunks(higherMaxUnlockChunks);
-      expect(await zenVault.maxUnlockChunks()).to.equal(higherMaxUnlockChunks);
-
-      // set minStake back to default
-      await zenVault.connect(owner).setMaxUnlockChunks(initialMaxUnlockChunks);
-      expect(await zenVault.maxUnlockChunks()).to.equal(initialMaxUnlockChunks);
-    });
-
-    it("should emit MaxUnlockChunksSet event", async function () {
-      const maxUnlockChunks = 10;
-      await expect(zenVault.connect(owner).setMaxUnlockChunks(maxUnlockChunks))
-        .to.emit(zenVault, "MaxUnlockChunksSet")
-        .withArgs(maxUnlockChunks);
-    });
-
-    it("should not allow non-owners to set maxUnlockingCHunks", async function () {
-      const maxUnockChunks = 10;
-      await expect(zenVault.connect(user1).setMaxUnlockChunks(maxUnockChunks))
-        .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address)
+      it("should not allow non-owners to set native staking address", async function () {
+        const newAddress = "0x0000000000000000000000000000000000000801";
+        await expect(zenVault.connect(user1).setNativeStakingAddress(newAddress))
+          .to.be.revertedWithCustomError(zenVault, "OwnableUnauthorizedAccount").withArgs(user1.address);
+      });
     });
   });
 });
