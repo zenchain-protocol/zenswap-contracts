@@ -193,12 +193,36 @@ interface IZenVault {
      */
     function unlocking(address account, uint256 index) external view returns (uint256 value, uint32 era);
 
+    /**
+     * @notice Returns the total accumulated rewards per share in the vault
+     * @dev This value increases each time rewards are distributed to the vault
+     *      and is used to calculate individual user rewards
+     * @return The current cumulative reward per share value (scaled by PRECISION_FACTOR)
+     */
     function cumulativeRewardPerShare() external view returns (uint256);
 
+    /**
+     * @notice Returns the last reward-per-share value that was paid to a user
+     * @dev Used to track which portion of global rewards have already been accounted for a specific user
+     * @param user The address of the staker to check
+     * @return The last reward-per-share value applied to the user (scaled by PRECISION_FACTOR)
+     */
     function userRewardPerSharePaid(address user) external view returns (uint256);
 
+    /**
+     * @notice Returns the total accumulated slashes per share in the vault
+     * @dev This value increases each time the vault is slashed and is used
+     *      to calculate individual user slash amounts
+     * @return The current cumulative slash per share value (scaled by PRECISION_FACTOR)
+     */
     function cumulativeSlashPerShare() external view returns (uint256);
 
+    /**
+     * @notice Returns the last slash-per-share value that was applied to a user
+     * @dev Used to track which portion of global slashes have already been accounted for a specific user
+     * @param user The address of the staker to check
+     * @return The last slash-per-share value applied to the user (scaled by PRECISION_FACTOR)
+     */
     function userSlashPerShareApplied(address user) external view returns (uint256);
 
     /**
@@ -215,6 +239,11 @@ interface IZenVault {
      */
     function isWithdrawEnabled() external view returns (bool);
 
+    /**
+     * @notice Returns the minimum amount of tokens required for staking
+     * @dev This value enforces a lower bound on stake amounts to prevent dust balances
+     * @return The minimum amount of tokens that can be staked in a single transaction
+     */
     function minStake() external view returns (uint256);
 
     /**
@@ -248,10 +277,33 @@ interface IZenVault {
      */
     function withdrawUnlocked() external;
 
+    /**
+     * @notice Updates the user's state by applying pending rewards and slashes
+     * @dev This function processes any accumulated rewards and slashes for a user,
+     *      bringing their account state up to date with the current global state.
+     *      It calculates pending rewards based on cumulativeRewardPerShare
+     *      and pending slashes based on cumulativeSlashPerShare.
+     */
     function updateUserState() external;
 
+    /**
+     * @notice Distributes rewards to all stakers in the vault
+     * @dev Updates the cumulativeRewardPerShare based on the provided reward amount,
+     *      which will be proportionally distributed among stakers.
+     *      When a user interacts with the vault after this call, their rewards will be calculated
+     *      based on the updated cumulative value.
+     * @param rewardAmount The amount of rewards to distribute across all stakers
+     */
     function distributeRewards(uint256 rewardAmount) external;
 
+    /**
+     * @notice Applies a slashing penalty to all stakers in the vault
+     * @dev Updates the cumulativeSlashPerShare based on the provided slash amount,
+     *      which will be proportionally applied to all stakers.
+     *      The actual reduction in a user's stake happens when they interact with the vault
+     *      or when updateUserState is called for their address.
+     * @param slashAmount The amount to slash from the total staked value
+     */
     function doSlash(uint256 slashAmount) external;
 
     /**
@@ -275,10 +327,25 @@ interface IZenVault {
      */
     function setRewardAccount(address _rewardAccount) external;
 
+    /**
+     * @notice Sets the minimum amount required to stake in the vault
+     * @dev Updates the minimum staking threshold and emits a MinStakeSet event
+     * @param _minStake The new minimum staking amount
+     */
     function setMinStake(uint256 _minStake) external;
 
+    /**
+     * @notice Sets the maximum number of unlock chunks a user can have
+     * @dev Limits the number of concurrent unstaking operations per user
+     * @param _maxUnlockChunks The new maximum number of unlock chunks allowed
+     */
     function setMaxUnlockChunks(uint8 _maxUnlockChunks) external;
 
+    /**
+     * @notice Updates the address of the native staking precompile contract
+     * @dev Changes the contract that handles native chain staking operations
+     * @param _nativeStakingPrecompile The address of the new native staking contract
+     */
     function setNativeStakingAddress(address _nativeStakingPrecompile) external;
 
 // ------------------------------------------------------------
@@ -293,9 +360,26 @@ interface IZenVault {
      */
     function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory);
 
+    /**
+     * @notice Returns the amount of unclaimed rewards for a specific user
+     * @dev Calculates rewards based on the user's stake and the current reward metrics
+     * @param user The address of the user to check
+     * @return The amount of pending rewards that can be claimed or restaked
+     */
     function getPendingRewards(address user) external view returns (uint256);
 
+    /**
+     * @notice Returns the amount of pending slash for a specific user
+     * @dev Calculates the slash amount that will be applied to the user's stake on their next interaction
+     * @param user The address of the user to check
+     * @return The amount of pending slash to be applied
+     */
     function getPendingSlash(address user) external view returns (uint256);
 
+    /**
+     * @notice Returns an estimate of the total stake including pending rewards and slashes
+     * @dev This is an approximation as it doesn't account for all individual user state updates
+     * @return The approximate total value of all stakes in the vault after rewards and slashes
+     */
     function getApproximatePendingTotalStake() external view returns (uint256);
 }

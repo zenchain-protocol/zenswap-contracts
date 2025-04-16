@@ -226,6 +226,16 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         }
     }
 
+    /**
+     * @notice Public function to update the caller's pending rewards and slashes
+     * @dev Provides an external interface to the internal _updateUserState function,
+     *      allowing users to manually sync their account state. This applies any pending
+     *      slashes first, then calculates and auto-restakes any earned rewards.
+     *      Protected against reentrancy attacks.
+     *
+     * @custom:emits RewardsRestaked - If there are pending rewards to apply
+     * @custom:emits UserSlashApplied - If there are pending slashes to apply
+     */
     function updateUserState() external nonReentrant {
         _updateUserState(msg.sender);
     }
