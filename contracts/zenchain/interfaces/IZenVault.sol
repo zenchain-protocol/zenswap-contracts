@@ -10,20 +10,6 @@ interface IZenVault {
 // ------------------------------------------------------------
 
     /**
-     * @notice Emitted when staking functionality is enabled or disabled on the vault
-     * @dev This event is triggered when staking is turned on or off by the contract owner
-     * @param isEnabled True if staking was enabled, false if staking was disabled.
-     */
-    event StakingEnabled(bool isEnabled);
-
-    /**
-     * @notice Emitted when withdrawal functionality is enabled or disabled on the vault
-     * @dev This event is triggered when the contract owner toggles the ability to withdraw tokens
-     * @param isEnabled True if withdrawals were enabled, false if withdrawals were disabled
-     */
-    event WithdrawEnabled(bool isEnabled);
-
-    /**
      * @notice Emitted when a user stakes tokens in the vault
      * @dev This event is triggered when the stake() function successfully processes a deposit
      * @param user The address of the user who staked tokens (indexed for efficient filtering)
@@ -50,31 +36,49 @@ interface IZenVault {
     event Withdrawal(address indexed user, uint256 amount);
 
     /**
-     * @notice Emitted when exposure data for an era is recorded
-     * @dev This event is triggered when the recordEraStake function captures the staking state for an era
-     *      This information is crucial for proper reward distribution and slash calculations
-     * @param era The era for which exposure was recorded (indexed for efficient filtering)
-     * @param totalStake The total amount staked in the vault at the time of recording
+     * @notice Emitted when rewards are added to the vault
+     * @dev This event is triggered when new rewards are distributed to the vault,
+     *      updating the cumulative reward metrics
+     * @param rewardAmount The amount of rewards added to the vault
+     * @param cumulativeRewardPerShare The updated cumulative reward per share after this addition
+     * @param rewardRatio The ratio at which rewards are distributed for this addition
      */
-    event EraExposureRecorded(uint32 indexed era, uint256 totalStake);
+    event VaultRewardsAdded(uint256 rewardAmount, uint256 cumulativeRewardPerShare, uint256 rewardRatio);
 
     /**
-     * @notice Emitted when rewards are distributed to the vault and its stakers.
-     * @param era The era for which rewards are distributed (indexed for efficient filtering).
-     * @param rewardAmount The total amount of tokens distributed as rewards.
-     * @param userRewards An array of `UserReward` structures, where each entry represents a user's share
-     *                    of the distributed rewards, including their address and allocated amount.
+     * @notice Emitted when the vault is slashed
+     * @dev This event is triggered when a slashing penalty is applied to the vault,
+     *      updating the cumulative slash metrics
+     * @param slashAmount The amount slashed from the vault
+     * @param cumulativeSlashPerShare The updated cumulative slash per share after this slashing
+     * @param slashRatio The ratio at which the slash is distributed for this penalty
      */
-    event VaultRewardsDistributed(uint32 indexed era, uint256 rewardAmount, UserReward[] userRewards);
+    event VaultSlashed(uint256 slashAmount, uint256 cumulativeSlashPerShare, uint256 slashRatio);
 
     /**
-     * @notice Emitted when the vault is slashed.
-     * @param era The era in which the slash occurred (indexed for efficient filtering).
-     * @param slashAmount The total amount of tokens that were slashed from the vault.
-     * @param userSlashes An array of `UserSlash` structures, where each entry specifies a user's address
-     *                    and the amount of tokens slashed from their stake.
+     * @notice Emitted when a user's rewards are automatically restaked
+     * @dev This event is triggered when a user's pending rewards are compounded
+     *      by being added back into their staked balance
+     * @param user The address of the user whose rewards were restaked (indexed for efficient filtering)
+     * @param pendingReward The amount of rewards that were restaked
      */
-    event VaultSlashed(uint32 indexed era, uint256 slashAmount, UserSlash[] userSlashes);
+    event RewardsRestaked(address indexed user, uint256 pendingReward);
+
+    /**
+     * @notice Emitted when a slashing penalty is applied to a specific user
+     * @dev This event is triggered when a user's stake is reduced due to a slash,
+     *      detailing how the slash was distributed between their staked and unlocking balances
+     * @param user The address of the user who was slashed (indexed for efficient filtering)
+     * @param pendingSlash The total amount of slash pending for the user
+     * @param slashedFromStake The amount slashed from the user's active stake
+     * @param slashedFromUnlocking The amount slashed from the user's unlocking balance
+     */
+    event UserSlashApplied(
+        address indexed user,
+        uint256 pendingSlash,
+        uint256 slashedFromStake,
+        uint256 slashedFromUnlocking
+    );
 
     /**
      * @notice Emitted when the reward account address is updated
@@ -84,11 +88,39 @@ interface IZenVault {
     event RewardAccountSet(address account);
 
     /**
-     * @notice Emitted when the minimum staking threshold is updated
-     * @dev This event is triggered when the contract owner changes the minimum amount required for staking
-     * @param minStake The new minimum amount of tokens required for a stake operation
+     * @notice Emitted when staking functionality is enabled or disabled on the vault
+     * @dev This event is triggered when staking is turned on or off by the contract owner
+     * @param _isStakingEnabled True if staking was enabled, false if staking was disabled.
      */
-    event MinStakeSet(uint256 minStake);
+    event StakingEnabled(bool _isStakingEnabled);
+
+    /**
+     * @notice Emitted when withdrawal functionality is enabled or disabled on the vault
+     * @dev This event is triggered when the contract owner toggles the ability to withdraw tokens
+     * @param _isWithdrawEnabled True if withdrawals were enabled, false if withdrawals were disabled
+     */
+    event WithdrawEnabled(bool _isWithdrawEnabled);
+
+    /**
+     * @notice Emitted when the minimum staking requirement is updated
+     * @dev This event is triggered when the contract owner changes the minimum amount required for staking
+     * @param _minStake The new minimum amount of tokens required to stake
+     */
+    event MinStakeSet(uint256 _minStake);
+
+    /**
+     * @notice Emitted when the maximum number of unlock chunks is updated
+     * @dev This event is triggered when the contract owner changes the limit on concurrent unlocking operations
+     * @param _maxUnlockChunks The new maximum number of unlock chunks allowed per user
+     */
+    event MaxUnlockChunksSet(uint8 _maxUnlockChunks);
+
+    /**
+     * @notice Emitted when the native staking precompile address is updated
+     * @dev This event is triggered when the contract owner sets a new address for the native staking contract
+     * @param _nativeStakingPrecompile The new address of the native staking precompile contract
+     */
+    event NativeStakingAddressSet(address _nativeStakingPrecompile);
 
 // ------------------------------------------------------------
 // Structs
@@ -105,38 +137,9 @@ interface IZenVault {
         uint256 value;
         /**
          * @dev The era number when these tokens become fully unlocked and withdrawable
-         * @notice Tokens cannot be withdrawn until the current era reaches or exceeds this value
+         * @notice Tokens cannot be withdrawn until the current era exceeds this value
          */
         uint32 era;
-    }
-
-    /**
-     * @notice Records a user's staking position for a specific era
-     * @dev This data structure is used to track historical staking positions which are
-     *      essential for proper reward distribution and proportional slashing calculations.
-     *      The vault maintains these records for each era to ensure accurate accounting.
-     */
-    struct EraExposure {
-        /**
-         * @dev The address of the user who has staked tokens
-         * @notice Each unique address represents a distinct staker in the system
-         */
-        address staker;
-        /**
-         * @dev The total amount of tokens this user had staked during the specified era
-         * @notice This value may differ across eras as users stake or unstake tokens
-         */
-        uint256 value;
-    }
-
-    struct UserReward {
-        address staker;
-        uint256 value;
-    }
-
-    struct UserSlash {
-        address staker;
-        uint256 value;
     }
 
 // ------------------------------------------------------------
@@ -158,6 +161,29 @@ interface IZenVault {
     function rewardAccount() external view returns (address);
 
     /**
+     * @notice Returns the precision factor used in reward and slash calculations
+     * @dev This constant (1e18) prevents integer overflow in mathematical operations
+     * @return uint256 The precision factor value (1e18)
+     */
+    function PRECISION_FACTOR() external view returns (uint256);
+
+
+    /**
+     * @notice Returns the total amount of tokens staked in the vault
+     * @dev This value represents the sum of all user stakes, excluding pending rewards and slashes
+     * @return The total staked amount in the vault
+     */
+    function totalStake() external view returns (uint256);
+
+    /**
+     * @notice Returns the current staked balance for a user
+     * @dev Retrieves the total amount of tokens actively staked by an account, excluding pending rewards and slashes
+     * @param account The address of the staker
+     * @return The total amount of tokens staked by the account
+     */
+    function stakedBalances(address account) external view returns (uint256);
+
+    /**
      * @notice Returns information about a user's unlocking token chunk
      * @dev Retrieves data about tokens in the process of unlocking for withdrawal
      * @param account The address of the staker
@@ -167,61 +193,13 @@ interface IZenVault {
      */
     function unlocking(address account, uint256 index) external view returns (uint256 value, uint32 era);
 
-    /**
-     * @notice Returns the current staked balance for a user
-     * @dev Retrieves the total amount of tokens actively staked by an account
-     * @param account The address of the staker
-     * @return The total amount of tokens staked by the account
-     */
-    function stakedBalances(address account) external view returns (uint256);
+    function cumulativeRewardPerShare() external view returns (uint256);
 
-    /**
-     * @notice Returns the address of a staker at the specified index
-     * @dev Provides access to the list of all stakers in the vault
-     * @param index The position in the stakers array to query
-     * @return staker The address of the staker at the given index
-     */
-    function stakers(uint256 index) external view returns (address staker);
+    function userRewardPerSharePaid(address user) external view returns (uint256);
 
-    /**
-     * @notice Returns the total amount staked in the vault at a specific era
-     * @dev Used for historical tracking of stake amounts across different eras
-     * @param era The era number to query
-     * @return The total amount staked in the vault during the specified era
-     */
-    function totalStakeAtEra(uint32 era) external view returns (uint256);
+    function cumulativeSlashPerShare() external view returns (uint256);
 
-    /**
-     * @notice Returns the staker address for a specific era and index.
-     * @dev Provides access to the list of stakers recorded for each era.
-     * @param era The era number to query.
-     * @param index The index of the staker in the era's list.
-     * @return staker The address of the staker.
-     */
-    function eraStakers(uint32 era, uint256 index) external view returns (address staker);
-
-    /**
-     * @notice Retrieves the stake exposure of a specific staker at a given era
-     * @dev Returns the amount of tokens a staker had exposed (staked) during a particular era
-     * @param staker The address of the staker whose exposure is being queried
-     * @param era The era number to query the exposure for
-     * @return The amount of tokens the staker had exposed during the specified era
-     */
-    function stakerEraExposures(uint32 era, address staker) external view returns (uint256);
-
-    /**
-     * @notice Returns the current total amount of tokens staked in the vault
-     * @dev Retrieves the aggregate sum of all users' staked balances
-     * @return The total amount of tokens currently staked in the vault
-     */
-    function totalStake() external view returns (uint256);
-
-    /**
-     * @notice Returns the most recent era when the vault was updated
-     * @dev Used to track when stake data was last recorded in the vault
-     * @return The era number of the last vault update
-     */
-    function lastEraUpdate() external view returns (uint32);
+    function userSlashPerShareApplied(address user) external view returns (uint256);
 
     /**
      * @notice Returns whether staking is currently enabled in the vault
@@ -237,11 +215,6 @@ interface IZenVault {
      */
     function isWithdrawEnabled() external view returns (bool);
 
-    /**
-     * @notice Returns the minimum amount of tokens required for staking
-     * @dev External view function that retrieves the minimum stake threshold
-     * @return uint256 The minimum amount of tokens (in wei) that can be staked in the vault
-     */
     function minStake() external view returns (uint256);
 
     /**
@@ -249,7 +222,7 @@ interface IZenVault {
      * @dev This value limits the size of a user's unlocking array to prevent DoS attacks
      * @return The maximum number of unstaking operations a user can have in the unlocking state
      */
-    function maxUnlockChunks() external view returns (uint256);
+    function maxUnlockChunks() external view returns (uint8);
 
 // ------------------------------------------------------------
 // Transaction (mutation) methods
@@ -275,28 +248,11 @@ interface IZenVault {
      */
     function withdrawUnlocked() external;
 
-    /**
-     * @notice Records the vault's total stake for the current era
-     * @dev Updates staking snapshots used for rewards and slashing calculations
-     */
-    function recordEraStake() external;
+    function updateUserState() external;
 
-    /**
-     * @notice Distributes rewards to stakers for a specific era
-     * @dev Called by the contract owner to distribute staking rewards to the vault
-     *      Triggers VaultRewardsDistributed event and calculates individual user rewards
-     * @param rewardAmount The total amount of rewards to distribute
-     * @param era The era for which rewards are being distributed
-     */
-    function distributeRewards(uint256 rewardAmount, uint32 era) external;
+    function distributeRewards(uint256 rewardAmount) external;
 
-    /**
-     * @notice Applies a slashing penalty to the vault
-     * @dev Reduces staked tokens proportionally across users due to validator misbehavior
-     * @param slashAmount The total amount of tokens to slash from the vault
-     * @param era The era in which the slashing occurred
-     */
-    function doSlash(uint256 slashAmount, uint32 era) external;
+    function doSlash(uint256 slashAmount) external;
 
     /**
      * @notice Enables or disables token staking functionality
@@ -319,40 +275,15 @@ interface IZenVault {
      */
     function setRewardAccount(address _rewardAccount) external;
 
-    /**
-     * @notice Updates the minimum amount of tokens required for staking
-     * @dev Can only be called by authorized accounts (likely owner)
-     * @param _minStake The new minimum staking amount in token units
-     */
     function setMinStake(uint256 _minStake) external;
+
+    function setMaxUnlockChunks(uint8 _maxUnlockChunks) external;
+
+    function setNativeStakingAddress(address _nativeStakingPrecompile) external;
 
 // ------------------------------------------------------------
 // User-defined view methods
 // ------------------------------------------------------------
-
-    /**
-     * @notice Returns the list of all current stakers in the vault
-     * @dev Provides an array of addresses that currently have active stakes
-     * @return An array of addresses representing all current stakers
-     */
-    function getCurrentStakers() external view returns (address[] memory);
-
-    /**
-     * @notice Retrieves a staker's exposure amounts across multiple eras
-     * @dev Returns an array of exposure values corresponding to each requested era
-     * @param staker The address of the staker to query exposures for
-     * @param eras An array of era indices to get the staker's exposures from
-     * @return An array of uint256 values representing the staker's exposure for each requested era
-     */
-    function getStakerExposuresForEras(address staker, uint32[] calldata eras) external view returns (uint256[] memory);
-
-    /**
-     * @notice Retrieves all staker exposures recorded for a specific era
-     * @dev Returns the full array of EraExposure structs for the specified era
-     * @param era The era index to retrieve exposure data from
-     * @return An array of EraExposure structs containing staker addresses and their exposure amounts
-     */
-    function getEraExposures(uint32 era) external view returns (EraExposure[] memory);
 
     /**
      * @notice Retrieves all unlocking chunks for a specific user
@@ -361,4 +292,10 @@ interface IZenVault {
      * @return An array of UnlockChunk structs containing information about the user's unlocking tokens
      */
     function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory);
+
+    function getPendingRewards(address user) external view returns (uint256);
+
+    function getPendingSlash(address user) external view returns (uint256);
+
+    function getApproximatePendingTotalStake() external view returns (uint256);
 }

@@ -7,187 +7,193 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
-// TODO: clear old data periodically to save storage space
-// TODO: paginate methods instead of iterating through large arrays?
-
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
-    uint256 constant public PRECISION_FACTOR = 1e18;
-
     // The liquidity pool token that can be staked in this vault.
     IUniswapV2Pair public pool;
-
     // The account that receives awards from consensus staking, on behalf of the vault, and distributes the rewards among the vault stakers.
     address public rewardAccount;
+    // Affects precision of calculations. Used to prevent integer overflow.
+    uint256 constant public PRECISION_FACTOR = 1e18;
+    // The ZenChain NativeStaking precompile
+    NativeStaking private nativeStaking = STAKING_CONTRACT;
 
+    // --- STAKE RELATED ---
+    // The total amount staked (does not including pending rewards/slashes)
+    uint256 public totalStake;
+    // Mapping of user addresses to their staked amounts (excluding pending rewards/slashes).
+    mapping(address => uint256) public stakedBalances;
     // Mapping of user addresses to their unlocking balances.
     mapping(address => UnlockChunk[]) public unlocking;
 
-    // Mapping of user addresses to their staked amounts.
-    mapping(address => uint256) public stakedBalances;
+    // --- REWARD RELATED ---
+    // Tracks cumulative rewards
+    uint256 public cumulativeRewardPerShare;
+    // Tracks reward value applied to each user (i.e., whether the user's rewards are up to date)
+    mapping(address => uint256) public userRewardPerSharePaid;
 
-    // A list of stakers; corresponds to keys of stakedBalances.
-    address[] public stakers;
+    // --- SLASH RELATED ---
+    // Tracks cumulative slashing
+    uint256 public cumulativeSlashPerShare;
+    // Tracks slash value applied to each user (i.e., whether the user's slash is up to date)
+    mapping(address => uint256) public userSlashPerShareApplied;
 
-    // Mapping of era index to total stake
-    mapping(uint32 => uint256) public totalStakeAtEra;
-
-    // Mapping of era index to list of exposed stakers
-    mapping(uint32 => address[]) public eraStakers;
-
-    // Mapping of era to staker to exposure.
-    // This is used to track whether a staker was already processed in recordEraStake.
-    mapping(uint32 => mapping(address => uint256)) public stakerEraExposures;
-
-    // The total amount staked
-    uint256 public totalStake;
-
-    // The last era in which this vault was updated
-    uint32 public lastEraUpdate;
-
+    // --- CONFIGURATION RELATED ---
     // If false, new staking is not permitted.
     bool public isStakingEnabled;
-
     // If false, withdrawals are not permitted. This can be used in the case of an emergency.
     bool public isWithdrawEnabled = true;
-
     // A user cannot stake an amount less than minStake.
     uint256 public minStake = 1e18;
-
     // The length limit of a user's `unlocking` array.
-    uint256 public maxUnlockChunks = 10;
+    uint8 public maxUnlockChunks = 10;
 
-    /**
-     * @notice Initializes the ZenVault contract with a Uniswap V2 pair address
-     * @dev Sets up the contract by:
-     *      1. Inheriting from Ownable with an initial owner
-     *      2. Initializing the Uniswap V2 pair interface that represents the pool tokens managed by this vault
-     *
-     * @param owner The address of the contract admin. This must be set to address(0) in production.
-     * @param pairAddress The address of the Uniswap V2 pair contract to be used as the staking token
-     *                    This should be a valid IUniswapV2Pair compatible contract address
-     *
-     * @custom:security-note The contract should intentionally start with the zero address as its owner in production.
-     *                       The owner can be set to any address for testing and development.
-     */
     constructor(address owner, address pairAddress) Ownable(owner) {
         pool = IUniswapV2Pair(pairAddress);
     }
 
     /**
-     * @notice Stakes tokens in the ZenVault
-     * @dev Allows users to stake tokens in the ZenVault contract. This function:
-     *      1. Transfers staking tokens from the user to this contract
-     *      2. Records the user's staked balance
-     *      3. Adds the user to the stakers array if this is their first stake
-     *      4. Updates the total stake in the ZenVault
+     * @notice Allows users to stake liquidity pool tokens in the ZenVault
+     * @dev This function handles the entire staking process, including:
+     *      - Validating stake requirements
+     *      - Updating user states (pending rewards and slashes)
+     *      - Transferring tokens from user to vault
+     *      - Updating contract state
+     *      - Emitting relevant events
      *
-     * @param amount The amount of tokens to stake (must be > minStake)
+     * The function uses nonReentrant modifier to prevent reentrancy attacks.
+     * New users (with no previous stake) will have their reward and slash trackers
+     * initialized to current global values to prevent retroactive rewards/slashes.
      *
-     * @custom:throws "Staking is not currently permitted in this ZenVault." - If staking is disabled
-     * @custom:throws "Amount must be greater than minStake." - If the amount is less than minStake
-     * @custom:throws "Not enough allowance to transfer tokens from the user to the vault." - If allowance is insufficient
-     * @custom:throws Various errors may be thrown by the transferFrom function
+     * @param amount The amount of liquidity pool tokens to stake (must be >= minStake)
      *
-     * @custom:emits Staked - When tokens are successfully staked, with the staker's address and amount
+     * @custom:requirements
+     *   - Staking must be enabled in the vault
+     *   - Staked amount must be >= minStake
+     *   - User must have approved sufficient allowance for token transfer
      *
-     * @custom:security non-reentrant - Protected against reentrancy attacks
-     * @custom:security-note Requires approval of tokens to this contract before staking
+     * @custom:modifies
+     *   - stakedBalances[user] - Increases by amount
+     *   - totalStake - Increases by amount
+     *   - For new stakers: userRewardPerSharePaid and userSlashPerShareApplied are initialized
+     *
+     * @custom:emits Staked(address indexed user, uint256 amount)
      */
     function stake(uint256 amount) external nonReentrant {
         require(isStakingEnabled, "Staking is not currently permitted in this ZenVault.");
         require(amount >= minStake, "Amount must be at least minStake.");
-        uint256 poolAllowance = pool.allowance(msg.sender, address(this));
+        address user = msg.sender;
+        uint256 poolAllowance = pool.allowance(user, address(this));
         require(poolAllowance >= amount, "Not enough allowance to transfer tokens from the user to the vault.");
 
-        // Transfer the staking tokens from the user to this contract.
-        pool.transferFrom(msg.sender, address(this), amount);
+        // Calculate pending slashes & rewards
+        _updateUserState(user);
 
-        // Update the user's staked balance.
-        uint256 initialBalance = stakedBalances[msg.sender];
-        if (initialBalance < minStake) {
-            stakers.push(msg.sender);
+        uint256 initialBalance = stakedBalances[user];
+
+        // Initialize paid values to current global; prevents retroactive rewards/slashes
+        if (initialBalance == 0) {
+            userRewardPerSharePaid[user] = cumulativeRewardPerShare;
+            userSlashPerShareApplied[user] = cumulativeSlashPerShare;
         }
-        stakedBalances[msg.sender] = initialBalance + amount;
+
+        // Transfer tokens
+        pool.transferFrom(user, address(this), amount);
+
+        // Update balance and total stake
+        stakedBalances[user] = initialBalance + amount;
         totalStake += amount;
 
-        emit Staked(msg.sender, amount);
+        emit Staked(user, amount);
     }
 
     /**
-     * @notice Unstake tokens.
-     * @dev This function:
-     *      1. Reduces the caller's staked balance
-     *      2. Reduces the total stake in the ZenVault
-     *      3. Creates an unlock chunk that will become available after the bonding period
-     *      4. Does not immediately return tokens to the caller - they must call withdrawUnlocked() after the bonding period
+     * @notice Allows users to initiate the unstaking process for their liquidity pool tokens
+     * @dev This function handles the entire unstaking initiation process, including:
+     *      - Updating user state (pending rewards and slashes)
+     *      - Validating unstake requirements
+     *      - Moving tokens from staked balance to the unlocking queue
+     *      - Creating an unlock chunk with appropriate unlock era
      *
-     * @param amount Amount of tokens to unstake (must be > 0 and <= user's staked balance)
+     * The function uses nonReentrant modifier to prevent reentrancy attacks.
+     * Unstaked tokens are not immediately available and must go through an unlocking period
+     * determined by the native staking protocol's bonding duration.
      *
-     * @custom:throws "Amount must be greater than zero." - If the amount is 0
-     * @custom:throws "Insufficient staked balance." - If the user's staked balance is less than the requested amount
-     * @custom:throws "Remaining staked balance must either be zero or at least minStake" - If remaining staked balance would fall below minStake but exceed zero
-     * @custom:throws "Unlocking array length limit has been reached. Withdraw unlocked tokens before unstaking." - If user has too many unlocking chunks.
+     * @param amount The amount of liquidity pool tokens to unstake
      *
-     * @custom:emits Unstaked - When tokens are successfully unstaked
+     * @custom:requirements
+     *   - Amount must be greater than zero
+     *   - User must have sufficient staked balance
+     *   - Remaining staked balance must either be zero or at least minStake
+     *   - User's unlocking array must not have reached maxUnlockChunks limit
      *
-     * @custom:security non-reentrant - Protected by the nonReentrant modifier on the public unstake function
-     * @custom:security-note This function moves tokens to an unlocking state rather than transferring them immediately
+     * @custom:modifies
+     *   - stakedBalances[user] - Decreased by amount
+     *   - totalStake - Decreased by amount
+     *   - unlocking[user] - New UnlockChunk added
+     *
+     * @custom:emits Unstaked(address indexed user, uint256 amount)
      */
     function unstake(uint256 amount) external nonReentrant {
         require(amount > 0, "Amount must be greater than zero.");
-        uint256 initialUserBalance = stakedBalances[msg.sender];
+        address user = msg.sender;
+
+        // update state
+        _updateUserState(user);
+
+        // additional checks
+        uint256 initialUserBalance = stakedBalances[user];
         require(initialUserBalance >= amount, "Insufficient staked balance.");
         uint256 remainingBalance = initialUserBalance - amount;
         require(remainingBalance >= minStake || remainingBalance == 0, "Remaining staked balance must either be zero or at least minStake");
-        require(unlocking[msg.sender].length < maxUnlockChunks, "Unlocking array length limit reached. Withdraw unlocked tokens before unstaking.");
+        require(unlocking[user].length < maxUnlockChunks, "Unlocking array length limit reached. Withdraw unlocked tokens before unstaking.");
 
         // Update the user's staked balance.
-        stakedBalances[msg.sender] = remainingBalance;
-        totalStake = totalStake - amount;
+        stakedBalances[user] = remainingBalance;
+        totalStake -= amount;
 
         // Transfer the staking tokens from stakedBalances to unlocking
-        uint32 currentEra = STAKING_CONTRACT.currentEra();
-        uint32 bondingDuration = STAKING_CONTRACT.bondingDuration();
+        uint32 currentEra = nativeStaking.currentEra();
+        uint32 bondingDuration = nativeStaking.bondingDuration();
         UnlockChunk memory chunk = UnlockChunk(amount, currentEra + bondingDuration);
-        unlocking[msg.sender].push(chunk);
+        unlocking[user].push(chunk);
 
-        // remove staker if fully unstaked
-        if (remainingBalance < minStake) {
-            removeFromStakers(msg.sender);
-        }
-
-        emit Unstaked(msg.sender, amount);
+        emit Unstaked(user, amount);
     }
 
     /**
-     * @notice Withdraws all unlocked tokens to the caller's address
-     * @dev This function:
-     *      1. Retrieves the current era from the STAKING_CONTRACT
-     *      2. Processes all unlock chunks for the caller
-     *      3. Transfers any unlocked tokens to the caller
-     *      4. Removes processed chunks from storage while preserving locked chunks
-     *      5. Uses an optimized in-place array filtering technique to minimize gas costs
+     * @notice Allows users to withdraw their liquidity tokens that have completed the unlocking period
+     * @dev This function processes all unlocking chunks for a user and transfers any tokens that have
+     *      completed their unlocking period (where chunk.era < currentEra). The function:
+     *      1. Updates the user's state to apply any pending slashes
+     *      2. Identifies which chunks are fully unlocked based on the current era
+     *      3. Compresses the remaining locked chunks by removing the unlocked ones
+     *      4. Transfers the total unlocked amount to the user
      *
-     * Tokens are considered unlocked when the current era is greater than or equal to
-     * the era specified in the unlock chunk.
+     * The function uses the nonReentrant modifier to prevent reentrancy attacks and optimizes
+     * array operations by using a write index pattern to avoid excessive gas costs when
+     * reorganizing the unlocking array.
      *
-     * If no tokens are eligible for withdrawal, the function completes without transferring
-     * any tokens but still emits an event with a zero amount.
+     * @custom:requirements
+     *   - Withdrawals must be enabled in the vault
+     *   - User must have at least one unlocking chunk
      *
-     * @custom:emits Withdrawal - If tokens are withdrawn, with the caller's address and
-     *                            the total amount withdrawn (may be zero)
+     * @custom:modifies
+     *   - unlocking[user] - Removes chunks that have completed the unlock period
+     *   - pool balance - Transfers unlocked tokens to the user
      *
-     * @custom:security-note No reentrancy protection is applied, as the state is fully updated
-     *                       before any external calls
-     * @custom:gas-optimization Uses in-place array filtering to avoid creating new arrays
+     * @custom:emits Withdrawal(address indexed user, uint256 amount)
      */
     function withdrawUnlocked() external nonReentrant {
         require(isWithdrawEnabled, "Withdrawals are temporarily disabled.");
+        address user = msg.sender;
 
-        UnlockChunk[] storage chunks = unlocking[msg.sender];
-        require(chunks.length > 0, "No unlocking chunks found for caller.");
+        // Ensure slashes are applied before withdrawal
+        _updateUserState(user);
 
-        uint32 currentEra = STAKING_CONTRACT.currentEra();
+        UnlockChunk[] storage chunks = unlocking[user];
+        require(chunks.length > 0, "Nothing to withdraw.");
+
+        uint32 currentEra = nativeStaking.currentEra();
         uint256 writeIndex = 0;
         uint256 totalToTransfer = 0;
 
@@ -195,7 +201,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         uint256 len = chunks.length;
         for (uint256 i = 0; i < len; i++) {
             UnlockChunk memory chunk = chunks[i];
-            if (chunk.era <= currentEra) {
+            if (chunk.era < currentEra) {
                 // Chunk is unlocked: add its value to the total to transfer
                 totalToTransfer += chunk.value;
             } else {
@@ -208,216 +214,236 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         }
 
         // Remove unlocked chunks by popping excess elements
-        uint256 toPop = chunks.length - writeIndex;
-        for (uint256 i = 0; i < toPop; i++) {
+        uint256 numToPop = chunks.length - writeIndex;
+        for (uint256 i = 0; i < numToPop; i++) {
             chunks.pop();
         }
 
         // Transfer unlocked tokens to the caller, if any
         if (totalToTransfer > 0) {
-            pool.transfer(msg.sender, totalToTransfer);
-            emit Withdrawal(msg.sender, totalToTransfer);
+            pool.transfer(user, totalToTransfer);
+            emit Withdrawal(user, totalToTransfer);
         }
     }
 
-    /**
-     * @notice Records the total stake and individual staker exposures for the current era
-     * @dev Updates the stake record for the era, capturing the current state of all active stakers.
-     *      This function performs the following operations:
-     *      1. Validates that the era is not already finalized
-     *      2. Records the total stake amount for the era
-     *      3. Updates the list of staker exposures for the era, capturing each staker's balance
-     *      5. Updates the lastEraUpdate value to mark this era as processed
-     *
-     * @custom:throws "Era exposures have been finalized for the current era." - If trying to call this function twice in the same era
-     *
-     * @custom:emits EraExposureRecorded - When era stake is successfully recorded, with era number and total stake amount
-     *
-     * @custom:security non-reentrant - Protected against reentrancy attacks
-     * @custom:security-note This function manages critical staker exposure data used for reward calculations
-     */
-    function recordEraStake() external onlyOwner {
-        uint32 era = STAKING_CONTRACT.currentEra();
-        require(era > lastEraUpdate, "Era exposures have been finalized for the current era.");
-
-        // set total stake
-        uint256 currentTotalStake = totalStake;
-        totalStakeAtEra[era] = currentTotalStake;
-        // set lastUpdate era
-        lastEraUpdate = era;
-        // set era stakers
-        address[] memory stakersInMemory = stakers;
-        eraStakers[era] = stakersInMemory;
-
-        // Update era exposures
-        mapping(address => uint256) storage currentEraExposures = stakerEraExposures[era];
-        uint256 len = stakersInMemory.length;
-        for (uint256 i = 0; i < len; i++) {
-            address staker = stakersInMemory[i];
-            currentEraExposures[staker] = stakedBalances[staker];
-        }
-
-        emit EraExposureRecorded(era, currentTotalStake);
+    function updateUserState() external nonReentrant {
+        _updateUserState(msg.sender);
     }
 
     /**
-     * @notice Distributes rewards to stakers for a specific era
-     * @dev This function allows the contract owner to distribute rewards proportionally to stakers based on their
-     *      exposure during a specific era. The process involves:
-     *      1. Transferring reward tokens from the owner to the contract
-     *      2. Calculating each staker's share based on their exposure in the specified era
-     *      3. Adding rewards to stakers' balances without requiring them to claim separately
-     *      4. Incrementing the total stake with the reward amount
+     * @notice Distributes reward tokens to the vault for all stakers
+     * @dev This function allows the contract owner to distribute rewards to all stakers proportionally
+     *      based on their stake in the vault. The rewards are not directly sent to stakers but rather
+     *      update the global reward metrics that will be used when stakers claim their rewards.
      *
-     * The reward distribution uses a precision factor (1e18) to ensure accurate calculation of proportional rewards
-     * even when dealing with small amounts.
+     * The function performs the following operations:
+     *      - Validates reward amount and reward account configuration
+     *      - Checks sufficient allowance from reward account
+     *      - Transfers tokens from reward account to the vault
+     *      - Updates the cumulative reward per share metric if there are stakers
+     *      - Emits an event with reward distribution details
      *
-     * @param rewardAmount Amount of tokens to distribute as rewards (must be > 0)
-     * @param era The specific era for which to distribute rewards
+     * If there are no stakers (totalStake == 0), the tokens are still transferred to the vault,
+     * but the cumulativeRewardPerShare is not updated since there's no one to distribute to.
      *
-     * @custom:throws "Amount must be greater than zero." - If the reward amount is 0 or negative
-     * @custom:throws "Not enough allowance to transfer rewards from the vault's reward account to the vault." - If insufficient allowance
-     * @custom:throws "No stake for this era" - If there are no stakers recorded for the specified era
-     * @custom:throws Various errors may be thrown by the transferFrom function
+     * @param rewardAmount The amount of liquidity pool tokens to distribute as rewards
      *
-     * @custom:emits VaultRewardsDistributed - After all rewards are distributed, with the era and total reward amount
+     * @custom:requirements
+     *   - Can only be called by the contract owner
+     *   - rewardAmount must be greater than zero
+     *   - rewardAccount must be set (not zero address)
+     *   - rewardAccount must have approved sufficient allowance for the vault
      *
-     * @custom:security onlyOwner - Can only be called by the contract owner
-     * @custom:security-note Requires the reward tokens to be approved to this contract before distribution
+     * @custom:modifies
+     *   - cumulativeRewardPerShare - Increases by (rewardAmount * PRECISION_FACTOR / totalStake) if totalStake > 0
+     *
+     * @custom:emits VaultRewardsAdded(uint256 amount, uint256 newCumulativeRewardPerShare, uint256 rewardRatio)
      */
-    function distributeRewards(uint256 rewardAmount, uint32 era) external onlyOwner {
+    function distributeRewards(uint256 rewardAmount) external onlyOwner {
         require(rewardAmount > 0, "Amount must be greater than zero.");
-
+        require(rewardAccount != address(0), "Reward account not set.");
+        // check allowance
         uint256 poolAllowance = pool.allowance(rewardAccount, address(this));
         require(poolAllowance >= rewardAmount, "Not enough allowance to transfer rewards from the vault's reward account to the vault.");
-
-        uint256 _totalStakeAtEra = totalStakeAtEra[era];
-        require(_totalStakeAtEra > 0, "No stake for this era");
 
         // Transfer the staking tokens from the reward account to this contract.
         pool.transferFrom(rewardAccount, address(this), rewardAmount);
 
-        uint256 rewardRatio = rewardAmount * PRECISION_FACTOR / _totalStakeAtEra;
-
-        // Distribute rewards proportionally to stakers based on their era exposure
-        mapping(address => uint256) storage currentEraExposures = stakerEraExposures[era];
-        uint256 totalRewarded = 0;
-        address[] memory exposedStakers = eraStakers[era];
-        uint256 len = exposedStakers.length;
-        UserReward[] memory allUserRewards = new UserReward[](len);
-        for (uint256 i = 0; i < len; i++) {
-            address user = exposedStakers[i];
-            uint256 exposure = currentEraExposures[user];
-            uint256 userReward = exposure * rewardRatio / PRECISION_FACTOR;
-            uint256 userBalanceBeforeReward = stakedBalances[user];
-            uint256 userBalanceAfterReward = userBalanceBeforeReward + userReward;
-            // Update the stakers array.
-            if (userBalanceBeforeReward < minStake && userBalanceAfterReward >= minStake) {
-                stakers.push(user);
-            }
-            // Update the user's staked balance.
-            stakedBalances[user] = userBalanceAfterReward;
-
-            allUserRewards[i] = UserReward(user, userReward);
-            totalRewarded = totalRewarded + userReward;
+        uint256 rewardRatio;
+        if (totalStake > 0) {
+            // Add reward proportionally based on current total stake
+            rewardRatio = rewardAmount * PRECISION_FACTOR / totalStake;
+            cumulativeRewardPerShare += rewardRatio;
         }
 
-        // totalRewarded may slightly differ from rewardAmount due to precision, but that's okay.
-        totalStake = totalStake + totalRewarded;
-        emit VaultRewardsDistributed(era, totalRewarded, allUserRewards);
+        emit VaultRewardsAdded(rewardAmount, cumulativeRewardPerShare, rewardRatio);
     }
 
     /**
-     * @notice Applies a slashing penalty to stakers proportional to their stake in a specific era
-     * @dev This function implements the vault slashing mechanism where penalties are distributed
-     *      proportionally among all stakers based on their exposure in the specified era.
-     *      The function:
-     *      1. Retrieves total stake amount for the specified era
-     *      2. Iterates through all staker exposures for that era
-     *      3. Calculates each user's slash amount proportionally to their stake
-     *      4. Applies the slash to each user via the internal _applySlashToUser function
-     *      5. Emits a VaultSlashed event when complete
+     * @notice Allows the owner to slash a portion of the total stake as a penalty
+     * @dev This function implements the slashing mechanism for the ZenVault:
+     *      - Verifies there is stake to slash
+     *      - Caps the slash amount to the available total stake to prevent underflow
+     *      - Calculates the slash ratio proportionally across all stakers
+     *      - Updates the cumulative slash tracker that's used to apply penalties to stakers
      *
-     * @param slashAmount The total amount to be slashed from the vault
-     * @param era The era identifier for which the slash should be applied
+     * The slashing is implemented through a global accounting system using cumulative
+     * values. Individual staker balances are not directly modified; instead, the penalties are applied lazily.
      *
-     * @custom:security onlyOwner - Can only be called by the contract owner
-     * @custom:emits VaultSlashed - When the slashing process is complete, with the era and amount
+     * @param slashAmount The amount to slash from the total stake
      *
-     * @notice The slashing is implemented using the formula:
-     *         userSlash = (userStake / totalStake) * slashAmount
-     *         This ensures proportional distribution of the penalty among all stakers
+     * @custom:requirements
+     *   - Can only be called by the contract owner
+     *   - Total stake must be greater than zero
+     *
+     * @custom:modifies
+     *   - cumulativeSlashPerShare - Increases by the slash ratio
+     *
+     * @custom:emits VaultSlashed(uint256 actualSlashAmount, uint256 cumulativeSlashPerShare, uint256 slashRatio)
      */
-    function doSlash(uint256 slashAmount, uint32 era) external onlyOwner {
-        uint256 _totalStakeAtEra = totalStakeAtEra[era];
-        require(_totalStakeAtEra > 0, "No stake for this era");
+    function doSlash(uint256 slashAmount) external onlyOwner {
+        require(totalStake > 0, "No stake to slash.");
 
-        uint256 slashRatio = slashAmount * PRECISION_FACTOR / _totalStakeAtEra;
+        // Ensure slashAmount doesn't exceed totalStake to avoid totalStake underflow
+        uint256 actualSlashAmount = slashAmount > totalStake ? totalStake : slashAmount;
 
-        mapping(address => uint256) storage currentEraExposures = stakerEraExposures[era];
-        uint256 totalSlashed = 0;
-        address[] memory exposedStakers = eraStakers[era];
-        uint256 len = exposedStakers.length;
-        UserSlash[] memory allUserSlashes = new UserSlash[](len);
-        for (uint256 i = 0; i < len; i++) {
-            address user = exposedStakers[i];
-            uint256 exposure = currentEraExposures[user];
-            uint256 intendedUserSlash = exposure * slashRatio / PRECISION_FACTOR;
-            uint256 actualUserSlash = _applySlashToUser(intendedUserSlash, user);
-            totalSlashed = totalSlashed + actualUserSlash;
-            allUserSlashes[i] = UserSlash(user, actualUserSlash);
+        if (actualSlashAmount > 0) {
+            // Increase cumulative slash proportionally based on current total stake
+            uint256 slashRatio = actualSlashAmount * PRECISION_FACTOR / totalStake;
+            cumulativeSlashPerShare += slashRatio;
+            emit VaultSlashed(actualSlashAmount, cumulativeSlashPerShare, slashRatio);
         }
-
-        // totalSlashed may slightly differ from slashAmount due to precision, but that's okay.
-        emit VaultSlashed(era, totalSlashed, allUserSlashes);
     }
 
     /**
-     * @notice Applies a slashing penalty to a specific user
-     * @dev Implements the slashing logic for an individual user by reducing their staked balance
-     *      and/or unlocking chunks when needed. The function handles two cases:
-     *      1. If the user's staked balance covers the slash amount, it simply deducts from there
-     *      2. If the staked balance is insufficient, it first depletes the staked balance,
-     *         then continues slashing from unlocking chunks in reverse order (newest first)
+     * @notice Applies a calculated slash penalty to a user's tokens
+     * @dev Applies slashing in a specific order:
+     *      1. Calculates slash amount proportional to user's staked balance
+     *      2. Reduces user's active staked balance first
+     *      3. If more slashing needed, reduces unlocking chunks starting from newest
+     *      4. Emits event with detailed slash breakdown
      *
-     * @param slashAmount The amount to be slashed from the user
-     * @param user The address of the user to apply the slash to
+     * The slash amount is calculated as: userStake * slashOutstanding / PRECISION_FACTOR
      *
-     * @custom:security internal - Only callable from within the contract
+     * @param user Address of the user to apply the slash to
+     * @param slashOutstanding The normalized slash factor (scaled by PRECISION_FACTOR)
+     *
+     * @custom:modifies
+     *   - stakedBalances[user] - May be reduced by slashed amount
+     *   - totalStake - Reduced by amount slashed from staked balance
+     *   - unlocking[user] - Chunks may be reduced or removed if staked balance is insufficient
+     *
+     * @custom:emits UserSlashApplied(address user, uint256 totalSlashed, uint256 slashedFromStake, uint256 slashedFromUnlocking)
      */
-    function _applySlashToUser(uint256 slashAmount, address user) internal returns(uint256) {
-        uint256 remainingSlash = slashAmount;
-        uint256 intialStakedBalance = stakedBalances[user];
-        // Case 1: We can slash directly from user balance
-        if (intialStakedBalance >= slashAmount) {
-            uint256 remainingBalance = intialStakedBalance - slashAmount;
-            stakedBalances[user] = remainingBalance;
-            remainingSlash = 0;
-            // cleanup: remove staker if fully unstaked
-            if (remainingBalance < minStake) {
-                removeFromStakers(user);
-            }
-        // Case 2: User's balance is in the process of unlocking
-        } else {
-            // slash from stake balance first
-            remainingSlash = remainingSlash - intialStakedBalance;
-            stakedBalances[user] = 0;
-            // cleanup: remove fully unstaked user from stakers list
-            removeFromStakers(user);
-            // slash from unlocking chunks
-            UnlockChunk[] storage chunks = unlocking[user];
-            while (chunks.length > 0 && remainingSlash > 0) {
-                UnlockChunk storage chunk = chunks[chunks.length - 1];
-                if (chunk.value > remainingSlash) {
-                    chunk.value -= remainingSlash;
+    function _applySlashToUser(address user, uint256 slashOutstanding) internal {
+        // Slash is proportional to current staked balance
+        uint256 userStakeBeforeSlash = stakedBalances[user];
+        uint256 pendingSlash = userStakeBeforeSlash * slashOutstanding / PRECISION_FACTOR;
+        if (pendingSlash > 0) {
+            uint256 remainingSlash = pendingSlash;
+
+            // Slash staked balance first
+            uint256 slashedFromStake = 0;
+            if (remainingSlash > 0 && userStakeBeforeSlash > 0) {
+                if (userStakeBeforeSlash >= remainingSlash) {
+                    slashedFromStake = remainingSlash;
+                    stakedBalances[user] = userStakeBeforeSlash - remainingSlash;
                     remainingSlash = 0;
                 } else {
-                    remainingSlash -= chunk.value;
-                    chunks.pop();
+                    slashedFromStake = userStakeBeforeSlash;
+                    remainingSlash -= userStakeBeforeSlash;
+                    stakedBalances[user] = 0;
+                }
+                // update total stake
+                totalStake -= slashedFromStake;
+            }
+
+            // Slash unlocking chunks if necessary
+            uint256 slashedFromUnlocking = 0;
+            if (remainingSlash > 0) {
+                UnlockChunk[] storage chunks = unlocking[user];
+                // slash newest first because they will become unlocked last
+                while (chunks.length > 0 && remainingSlash > 0) {
+                    UnlockChunk storage chunk = chunks[chunks.length - 1];
+                    uint256 chunkSlash = 0;
+                    if (chunk.value > remainingSlash) {
+                        chunkSlash = remainingSlash;
+                        chunk.value -= remainingSlash;
+                        remainingSlash = 0;
+                    } else {
+                        chunkSlash = chunk.value;
+                        remainingSlash -= chunk.value;
+                        chunks.pop();
+                    }
+                    slashedFromUnlocking += chunkSlash;
                 }
             }
+
+            emit UserSlashApplied(user, pendingSlash, slashedFromStake, slashedFromUnlocking);
         }
-        return slashAmount - remainingSlash;
+    }
+
+    /**
+     * @dev Calculates and applies pending rewards for a user by auto-restaking them
+     * @param user The address of the user receiving rewards
+     * @param rewardOutstanding The accumulated reward rate that hasn't been processed for this user
+     *
+     * @custom:modifies
+     *   - stakedBalances[user] - Increases by the calculated reward amount
+     *   - totalStake - Increases by the calculated reward amount
+     *
+     * @custom:emits RewardsRestaked(address indexed user, uint256 amount)
+     *
+     * @notice This internal function:
+     *   - Only processes rewards for users with existing stakes
+     *   - Calculates rewards proportional to user's stake using the precision factor
+     *   - Automatically compounds rewards by adding them to the user's stake
+     */
+    function _applyRewardToUser(address user, uint256 rewardOutstanding) internal {
+        uint256 userStakeBeforeReward = stakedBalances[user];
+        if (userStakeBeforeReward > 0) {
+            uint256 pendingReward = userStakeBeforeReward * rewardOutstanding / PRECISION_FACTOR;
+            if (pendingReward > 0) {
+                stakedBalances[user] += pendingReward;
+                totalStake += pendingReward;
+                emit RewardsRestaked(user, pendingReward);
+            }
+        }
+    }
+
+    /**
+     * @notice Updates a user's pending slashes and rewards based on global cumulative values
+     * @dev Critical internal function that must be called before any action that modifies a user's
+     *      staked balance or initiates withdrawals. Ensures state consistency by:
+     *      1. First applying any outstanding slashes to prevent rewarding slashed stake
+     *      2. Then applying any pending rewards based on current stake
+     *
+     * @param user The address of the user whose state needs updating
+     *
+     * @custom:sequence The function deliberately processes slashes before rewards to maintain
+     *                 fairness in token distribution
+     *
+     * @custom:modifies
+     *   - userSlashPerShareApplied[user] - Updated to current cumulativeSlashPerShare
+     *   - userRewardPerSharePaid[user] - Updated to current cumulativeRewardPerShare
+     *   - User's effective balance (via _applySlashToUser if applicable)
+     *   - User's reward balance (via _applyRewardToUser if applicable)
+     */
+    function _updateUserState(address user) internal {
+        // Apply pending slash first, if any, to ensure user cannot be rewarded for stake that should have been slashed
+        uint256 slashOutstanding = cumulativeSlashPerShare - userSlashPerShareApplied[user];
+        if (slashOutstanding > 0) {
+            _applySlashToUser(user, slashOutstanding);
+            // Update user's applied slash level regardless of whether they had stake
+            userSlashPerShareApplied[user] = cumulativeSlashPerShare;
+        }
+        // Apply pending rewards
+        uint256 rewardOutstanding = cumulativeRewardPerShare - userRewardPerSharePaid[user];
+        if (rewardOutstanding > 0) {
+            _applyRewardToUser(user, rewardOutstanding);
+            // Update user's paid reward level regardless of whether they had stake
+            userRewardPerSharePaid[user] = cumulativeRewardPerShare;
+        }
     }
 
     /**
@@ -427,16 +453,16 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      This function is restricted to the contract owner via the onlyOwner modifier.
      *      The state change is stored in the public isStakingEnabled boolean variable.
      *
-     * @param isEnabled True to enable staking, false to disable it
+     * @param _isStakingEnabled True to enable staking, false to disable it
      *
      * @custom:emits StakingEnabled - Emitted when the staking status changes, with the new status value
      * @custom:security Only callable by the contract owner
-     * @custom:usage This function is primarily used for emergency situations or
+     * @custom:usage This function is intended for emergency situations or
      *               maintenance periods where staking needs to be temporarily paused
      */
-    function setIsStakingEnabled(bool isEnabled) external onlyOwner {
-        isStakingEnabled = isEnabled;
-        emit StakingEnabled(isStakingEnabled);
+    function setIsStakingEnabled(bool _isStakingEnabled) external onlyOwner {
+        isStakingEnabled = _isStakingEnabled;
+        emit StakingEnabled(_isStakingEnabled);
     }
 
     /**
@@ -448,14 +474,14 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *      The state variable `isWithdrawEnabled` is used as a check in withdrawal-related
      *      functions to determine if withdrawals are currently permitted.
      *
-     * @param isEnabled If true, withdrawals will be permitted; if false, withdrawals will be blocked
+     * @param _isWithdrawEnabled If true, withdrawals will be permitted; if false, withdrawals will be blocked
      *
      * @custom:security onlyOwner - This function can only be called by the contract owner
      * @custom:emits WithdrawEnabled - Emitted when withdrawal status changes, with the new status as parameter
      */
-    function setIsWithdrawEnabled(bool isEnabled) external onlyOwner {
-        isWithdrawEnabled = isEnabled;
-        emit WithdrawEnabled(isWithdrawEnabled);
+    function setIsWithdrawEnabled(bool _isWithdrawEnabled) external onlyOwner {
+        isWithdrawEnabled = _isWithdrawEnabled;
+        emit WithdrawEnabled(_isWithdrawEnabled);
     }
 
     /**
@@ -471,7 +497,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function setRewardAccount(address _rewardAccount) external onlyOwner {
         rewardAccount = _rewardAccount;
-        emit RewardAccountSet(rewardAccount);
+        emit RewardAccountSet(_rewardAccount);
     }
 
     /**
@@ -482,69 +508,36 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function setMinStake(uint256 _minStake) external onlyOwner {
         require(_minStake > 0, "The minimum stake must be greater than 0.");
-        uint256 oldMinStake = minStake;
         minStake = _minStake;
         emit MinStakeSet(_minStake);
-
-        // ensure invariant
-        if (oldMinStake < minStake) {
-            address[] memory stakersInMemory = stakers;
-            uint256 len = stakersInMemory.length;
-            for (uint256 i = 0; i < len; i++) {
-                if (stakedBalances[stakersInMemory[i]] < minStake) {
-                    stakers[i] = stakersInMemory[len - 1];
-                    stakers.pop();
-                    len -= 1;
-                }
-            }
-        }
     }
 
     /**
-     * @notice Returns the complete list of current stakers in the vault
-     * @dev Provides read-only access to the entire stakers array
-     * @return An array of addresses that have active stakes in the vault
+     * @notice Updates the maximum number of unlock chunks allowed per user
+     * @dev Only callable by the contract owner
+     * @param _maxUnlockChunks The new maximum number of unlock chunks (must be > 0)
+     * @custom:emits MaxUnlockChunksSet(uint8 _maxUnlockChunks)
      */
-    function getCurrentStakers() external view returns (address[] memory) {
-        return stakers;
+    function setMaxUnlockChunks(uint8 _maxUnlockChunks) external onlyOwner {
+        require(_maxUnlockChunks > 0, "The maximum unlocking array length must be greater than 0.");
+        maxUnlockChunks = _maxUnlockChunks;
+        emit MaxUnlockChunksSet(_maxUnlockChunks);
     }
 
     /**
-     * @notice Retrieves a staker's exposure values for multiple eras
-     * @dev Returns an array containing the staker's exposure for each requested era.
-     *      The function accesses the stakerEraExposures mapping which tracks a staker's
-     *      stake exposure for specific eras. If a staker has no exposure for a particular
-     *      era, the default value of 0 will be returned for that era.
+     * @notice Updates the address of the native staking precompile contract
+     * @dev This function is reserved for emergency situations only, such as if the
+     *      staking precompile address changes in the underlying protocol. It should
+     *      not be used under normal circumstances.
      *
-     * @param staker The address of the staker whose exposures are being queried
-     * @param eras An array of era indices for which to retrieve the staker's exposures
+     * @param _nativeStakingPrecompile The new address of the native staking precompile
      *
-     * @return uint256[] An array of exposure values corresponding to each requested era,
-     *                   with the same order as the input eras array
+     * @custom:access Restricted to contract owner
+     * @custom:emits NativeStakingAddressSet(address _nativeStakingPrecompile)
      */
-    function getStakerExposuresForEras(address staker, uint32[] calldata eras) external view returns (uint256[] memory) {
-        uint256[] memory exposures = new uint256[](eras.length);
-        uint256 len = eras.length;
-        for (uint i = 0; i < len; i++) {
-            exposures[i] = stakerEraExposures[eras[i]][staker];
-        }
-        return exposures;
-    }
-
-    /**
-     * @notice Retrieves all staker exposures for a specific era
-     * @dev Returns the complete array of EraExposure elements for the given era
-     * @param era The era index to retrieve exposures for
-     * @return An array of EraExposure structs containing staker addresses and their exposure values
-     */
-    function getEraExposures(uint32 era) external view returns (EraExposure[] memory) {
-        address[] memory users = eraStakers[era];
-        EraExposure[] memory exposures = new EraExposure[](users.length);
-        uint256 len = users.length;
-        for (uint i = 0; i < len; i++) {
-            exposures[i] = EraExposure(users[i], stakerEraExposures[era][users[i]]);
-        }
-        return exposures;
+    function setNativeStakingAddress(address _nativeStakingPrecompile) external onlyOwner {
+        nativeStaking = NativeStaking(_nativeStakingPrecompile);
+        emit NativeStakingAddressSet(_nativeStakingPrecompile);
     }
 
     /**
@@ -557,16 +550,72 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         return unlocking[user];
     }
 
-    // Remove a staker from the stakers list. Only use if stake < minStake!
-    function removeFromStakers(address user) internal {
-        address[] memory stakersInMemory = stakers;
-        uint256 len = stakersInMemory.length;
-        for (uint256 i = 0; i < len; i++) {
-            if (stakersInMemory[i] == user) {
-                stakers[i] = stakersInMemory[len - 1];
-                stakers.pop();
-                return;
+    /**
+     * @notice Calculates the pending rewards for a specific user
+     * @dev Determines rewards by:
+     *      1. Calculating eligible stake after any pending slashes
+     *      2. Multiplying eligible stake by outstanding rewards per share
+     *      3. Applying precision factor to maintain calculation accuracy
+     * @param user The address of the user to check pending rewards for
+     * @return The amount of pending rewards available to the user, or 0 if none
+     */
+    function getPendingRewards(address user) external view returns (uint256) {
+        uint256 pendingSlash = this.getPendingSlash(user);
+        uint256 currentUserStake = stakedBalances[user];
+        uint256 eligibleUserStake = currentUserStake > pendingSlash ? currentUserStake - pendingSlash : 0;
+        if (eligibleUserStake > 0) {
+            uint256 rewardOutstanding = cumulativeRewardPerShare - userRewardPerSharePaid[user];
+            if (rewardOutstanding > 0) {
+                return eligibleUserStake * rewardOutstanding / PRECISION_FACTOR;
             }
         }
+        return 0;
+    }
+
+    /**
+     * @notice Calculates the total pending slash amount for a user without applying it.
+     * @dev This represents the slash amount that would be applied if _updateUserState were called now.
+     * @param user The address of the user to query.
+     * @return totalPendingSlash The total amount of tokens that would be slashed.
+     */
+    function getPendingSlash(address user) external view returns (uint256) {
+        // Calculate outstanding slash per share for the user
+        uint256 slashOutstanding = cumulativeSlashPerShare - userSlashPerShareApplied[user];
+        if (slashOutstanding == 0) {
+            return 0;
+        }
+
+        uint256 userStake = stakedBalances[user];
+        if (userStake == 0) {
+            return 0;
+        }
+
+        return userStake * slashOutstanding / PRECISION_FACTOR;
+    }
+
+    /**
+     * @notice Calculates an estimated value of the total stake including all pending rewards and slashes
+     * @dev Returns an approximation of what the total stake will be once all pending rewards and
+     *      slashes are applied. The actual totalStake state variable is only updated when rewards
+     *      and slashes are explicitly applied through distributeRewards or doSlash functions.
+     *
+     * The calculation uses the formula:
+     *     totalStake * (PRECISION_FACTOR + cumulativeRewardPerShare - cumulativeSlashPerShare) / PRECISION_FACTOR
+     *
+     * This formula accounts for:
+     * - Accumulated rewards tracked in cumulativeRewardPerShare
+     * - Accumulated slashes tracked in cumulativeSlashPerShare
+     * - The precision factor to maintain calculation accuracy
+     *
+     * @return uint256 The estimated total stake after applying all pending rewards and slashes
+     *
+     * @custom:accuracy This estimate is most accurate immediately following calls to distributeRewards
+     *                  or doSlash, as these functions update the cumulative trackers.
+     *
+     * @custom:usage This function is useful for external systems that need the most up-to-date
+     *               view of the vault's stake without waiting for reward/slash applications.
+     */
+    function getApproximatePendingTotalStake() external view returns (uint256) {
+        return totalStake * (PRECISION_FACTOR + cumulativeRewardPerShare - cumulativeSlashPerShare) / PRECISION_FACTOR;
     }
 }
