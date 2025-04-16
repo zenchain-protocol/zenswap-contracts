@@ -55,15 +55,15 @@ describe("ZenVault View Function Tests", function () {
     await lpToken.connect(rewardAccount).approve(await zenVault.getAddress(), INITIAL_SUPPLY * 2n);
   });
 
-  it("getUserUnlockingChunks should return correct data", async function () {
+  it("getUnlockingChunks should return correct data", async function () {
     // Create multiple unlocking chunks
     const chunk1 = ethers.parseEther("20");
     const chunk2 = ethers.parseEther("30");
     await zenVault.connect(user1).unstake(chunk1);
     await zenVault.connect(user1).unstake(chunk2);
 
-    // Verify getUserUnlockingChunks returns correct data
-    const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    // Verify getUnlockingChunks returns correct data
+    const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(2);
     expect(unlockingChunks[0].value).to.equal(chunk1);
     expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);
@@ -259,6 +259,16 @@ describe("ZenVault View Function Tests", function () {
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
       expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n); // Allow small rounding difference
+    });
+  });
+
+  describe("getSlashableStake", function () {
+    it("should return correct data", async function () {
+      // Split stake between stakedBalance and unlock chunk
+      await zenVault.connect(user1).unstake(stakeAmount1 / 2n);
+      // Verify that slashable stake is the sum of stakedBalance and unlock chunk
+      const slashableStake = await zenVault.getSlashableStake(user1.address);
+      expect(slashableStake).to.equal(stakeAmount1);
     });
   });
 });

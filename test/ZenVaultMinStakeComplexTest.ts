@@ -122,7 +122,7 @@ describe("ZenVault MinStake Complex Tests", function () {
       expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
 
       // Verify unlocking chunks were created
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(1);
       expect(unlockingChunks[0].value).to.equal(tinyStake);
     });

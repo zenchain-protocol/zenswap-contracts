@@ -21,7 +21,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // --- STAKE RELATED ---
     // The total amount staked (does not including pending rewards/slashes)
     uint256 public totalStake;
-    // The total amount of slashable stake (includes value of unlocking chunks within bonding period)
+    // The total amount of slashable stake (includes value of unlocking chunks)
     uint256 public totalSlashableStake;
     // Mapping of user addresses to their staked amounts (excluding pending rewards/slashes).
     mapping(address => uint256) public stakedBalances;
@@ -352,7 +352,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      */
     function _applySlashToUser(address user, uint256 slashOutstanding) internal {
         // Slash is proportional to current staked balance
-        uint256 userSlashableStake = _getUserSlashableStake(user);
+        uint256 userSlashableStake = this.getSlashableStake(user);
         uint256 pendingSlash = userSlashableStake * slashOutstanding / PRECISION_FACTOR;
         if (pendingSlash > 0) {
             uint256 remainingSlash = pendingSlash;
@@ -400,28 +400,6 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
             emit UserSlashApplied(user, pendingSlash, slashedFromStake, slashedFromUnlocking);
         }
-    }
-
-    /**
-     * @dev Calculates the total slashable stake for a given user.
-     * This includes their active staked balance plus the value of all
-     * unlocking chunks that are still within the bonding period.
-     * @param user The address of the user.
-     * @return The total slashable stake for the user.
-     */
-    function _getUserSlashableStake(address user) internal view returns (uint256) {
-        uint256 slashableStake = stakedBalances[user];
-        uint32 currentEra = nativeStaking.currentEra();
-        UnlockChunk[] memory chunks = unlocking[user];
-        uint256 len = chunks.length;
-        for (uint256 i = 0; i < len; i++) {
-            UnlockChunk memory chunk = chunks[i];
-            if (chunk.era < currentEra) {
-                break;
-            }
-            slashableStake += chunk.value;
-        }
-        return slashableStake;
     }
 
     /**
@@ -583,12 +561,28 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     }
 
     /**
+     * @notice Calculates the total slashable stake for a given user.
+     * This includes their active staked balance plus the value of all unlocking chunks.
+     * @param user The address of the user.
+     * @return The total slashable stake for the user.
+     */
+    function getSlashableStake(address user) external view returns (uint256) {
+        uint256 slashableStake = stakedBalances[user];
+        UnlockChunk[] memory chunks = unlocking[user];
+        uint256 len = chunks.length;
+        for (uint256 i = 0; i < len; i++) {
+            slashableStake += chunks[i].value;
+        }
+        return slashableStake;
+    }
+
+    /**
      * @notice Retrieves all unlocking chunks for a specific user
      * @dev Returns the complete array of UnlockChunk elements for the given user address
      * @param user The address of the user to retrieve unlocking chunks for
      * @return An array of UnlockChunk structs containing the user's unlocking balances
      */
-    function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory) {
+    function getUnlockingChunks(address user) external view returns (UnlockChunk[] memory) {
         return unlocking[user];
     }
 
@@ -629,7 +623,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
         }
 
         // Get the user's total slashable stake
-        uint256 userSlashableStake = _getUserSlashableStake(user);
+        uint256 userSlashableStake = this.getSlashableStake(user);
         if (userSlashableStake == 0) {
             return 0;
         }

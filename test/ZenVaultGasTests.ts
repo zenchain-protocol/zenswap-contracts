@@ -130,7 +130,7 @@ describe("ZenVault Gas Tests", function () {
     await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
 
     // verify unlocking chunks
-    const chunks = await zenVault.getUserUnlockingChunks(user1.address);
+    const chunks = await zenVault.getUnlockingChunks(user1.address);
     expect(chunks.length).to.equal(0);
 
     // Measure gas used for updateUserState
@@ -154,7 +154,7 @@ describe("ZenVault Gas Tests", function () {
     await zenVault.connect(owner).doSlash(largeSlashAmount);
 
     // verify unlocking chunks
-    const chunks = await zenVault.getUserUnlockingChunks(user1.address);
+    const chunks = await zenVault.getUnlockingChunks(user1.address);
     expect(chunks.length).to.equal(1);
 
     // Measure gas used for updateUserState
@@ -179,7 +179,7 @@ describe("ZenVault Gas Tests", function () {
     await zenVault.connect(owner).doSlash(largeSlashAmount);
 
     // verify unlocking chunks
-    const chunks = await zenVault.getUserUnlockingChunks(user1.address);
+    const chunks = await zenVault.getUnlockingChunks(user1.address);
     expect(chunks.length).to.equal(2);
 
     // Measure gas used for updateUserState

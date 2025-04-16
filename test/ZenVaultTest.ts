@@ -130,7 +130,7 @@ describe("ZenVault", function () {
       expect(await zenVault.totalStake()).to.equal(stakeAmount - unstakeAmount);
 
       // Check that the tokens are in the unlocking state
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(1);
       expect(unlockingChunks[0].value).to.equal(unstakeAmount);
       expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);
@@ -143,7 +143,7 @@ describe("ZenVault", function () {
       expect(await zenVault.totalStake()).to.equal(0n);
 
       // Check that the tokens are in the unlocking state
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(1);
       expect(unlockingChunks[0].value).to.equal(stakeAmount);
       expect(unlockingChunks[0].era).to.equal(INITIAL_ERA + BONDING_DURATION);
@@ -184,7 +184,7 @@ describe("ZenVault", function () {
       }
 
       // Verify unlocking chunks length
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(Number(maxUnlockChunks));
 
       // Try to create one more chunk (should fail)
@@ -211,7 +211,7 @@ describe("ZenVault", function () {
       await zenVault.connect(user1).withdrawUnlocked();
 
       // Check that no tokens were withdrawn
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(1);
       expect(unlockingChunks[0].value).to.equal(unstakeAmount);
     });
@@ -235,7 +235,7 @@ describe("ZenVault", function () {
       expect(finalBalance - initialBalance).to.equal(unstakeAmount);
 
       // Check that unlocking chunks were removed
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks.length).to.equal(0);
     });
 
@@ -417,7 +417,7 @@ describe("ZenVault", function () {
       const expectedSlash1 = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
 
       // Check that unlocking chunks were slashed
-      const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+      const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
       expect(unlockingChunks[0].value).to.equal(stakeAmount1 - expectedSlash1);
     });
 

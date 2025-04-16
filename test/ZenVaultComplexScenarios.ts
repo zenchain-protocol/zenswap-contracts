@@ -158,7 +158,7 @@ describe("ZenVault Complex Scenarios", function () {
     expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
 
     // Verify unlocking chunk contains the full amount
-    const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(1);
     expect(unlockingChunks[0].value).to.equal(totalStaked);
 
@@ -199,7 +199,7 @@ describe("ZenVault Complex Scenarios", function () {
     expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
 
     // Verify unlocking chunk contains the reduced amount
-    const unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    const unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(1);
     expect(unlockingChunks[0].value).to.equal(expectedRemaining);
 
@@ -240,7 +240,7 @@ describe("ZenVault Complex Scenarios", function () {
     expect(await zenVault.stakedBalances(user1.address)).to.equal(totalUserStake1 - unstakeAmount);
 
     // Verify unlocking chunk
-    let unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    let unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(1);
     expect(unlockingChunks[0].value).to.equal(unstakeAmount);
 
@@ -267,7 +267,7 @@ describe("ZenVault Complex Scenarios", function () {
     expect(await zenVault.stakedBalances(user1.address)).to.equal(expectedStakedBalance);
 
     // Verify unlocking chunk was slashed
-    unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     expect(unlockingChunks[0].value).to.equal(unstakeAmount - remainingSlash);
   });
 
@@ -284,7 +284,7 @@ describe("ZenVault Complex Scenarios", function () {
     }
 
     // Verify unlocking chunks
-    let unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    let unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     expect(unlockingChunks.length).to.equal(3);
     for (let i = 0; i < numUnlockingChunks; i++) {
       expect(unlockingChunks[i].value).to.equal(chunkSize);
@@ -311,7 +311,7 @@ describe("ZenVault Complex Scenarios", function () {
     expect(await zenVault.stakedBalances(user1.address)).to.equal(0);
 
     // Verify unlocking chunks were slashed
-    unlockingChunks = await zenVault.getUserUnlockingChunks(user1.address);
+    unlockingChunks = await zenVault.getUnlockingChunks(user1.address);
     // The new contract slashes newest chunks first
     expect(unlockingChunks.length).to.be.lte(3);
     if (unlockingChunks.length > 0) {

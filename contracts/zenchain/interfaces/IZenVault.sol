@@ -21,7 +21,7 @@ interface IZenVault {
     /**
      * @notice Emitted when a user initiates the unstaking of tokens
      * @dev This event is triggered when tokens are moved from staked to unlocking state
-     *      Note that this does not mean tokens are immediately withdrawn - they enter an unlocking period
+     *      Note that this does not mean tokens are immediately withdrawn - they enter an unlocking queue
      * @param user The address of the user who initiated unstaking (indexed for efficient filtering)
      * @param amount The quantity of tokens that were unstaked
      */
@@ -373,7 +373,16 @@ interface IZenVault {
      * @param user The address of the user to query unlocking chunks for
      * @return An array of UnlockChunk structs containing information about the user's unlocking tokens
      */
-    function getUserUnlockingChunks(address user) external view returns (UnlockChunk[] memory);
+    function getUnlockingChunks(address user) external view returns (UnlockChunk[] memory);
+
+    /**
+     * @notice Returns the total amount of a user's stake that is eligible for slashing
+     * @dev This includes both the user's actively staked balance and any tokens in the unlocking queue.
+     * Used for calculating a user's exposure to potential slashing penalties.
+     * @param user The address of the user to check
+     * @return The total amount of the user's stake subject to slashing penalties
+     */
+    function getSlashableStake(address user) external view returns (uint256);
 
     /**
      * @notice Returns the amount of unclaimed rewards for a specific user
