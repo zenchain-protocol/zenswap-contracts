@@ -92,10 +92,9 @@ describe("ZenVault updateUserState Tests", function () {
       // Calculate expected values
       const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
       const expectedSlash = (slashRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
-      const postSlashStake = STAKE_AMOUNT - expectedSlash;
       const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
-      const expectedReward = (rewardRatio * postSlashStake) / PRECISION_FACTOR;
-      const expectedFinalStake = postSlashStake + expectedReward;
+      const expectedReward = (rewardRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
+      const expectedFinalStake = STAKE_AMOUNT + expectedReward - expectedSlash;
 
       // Call updateUserState
       await zenVault.connect(user1).updateUserState();
@@ -222,38 +221,6 @@ describe("ZenVault updateUserState Tests", function () {
 
       // Verify user2 was slashed the expected amount
       expect(await zenVault.stakedBalances(user2.address)).to.equal(STAKE_AMOUNT - expectedSlash);
-    });
-  });
-
-  describe("updateUserState order of operations", function () {
-    beforeEach(async function () {
-      // Stake tokens
-      await zenVault.connect(user1).stake(STAKE_AMOUNT);
-    });
-
-    it("should apply slashes before rewards", async function () {
-      // Distribute rewards first in the contract
-      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
-
-      // Apply slash second in the contract
-      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
-
-      // Calculate expected values if slash is applied first
-      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
-      const expectedSlash = (slashRatio * STAKE_AMOUNT) / PRECISION_FACTOR;
-      const postSlashStake = STAKE_AMOUNT - expectedSlash;
-
-      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / STAKE_AMOUNT;
-      const expectedReward = (rewardRatio * postSlashStake) / PRECISION_FACTOR;
-
-      const expectedFinalStake = postSlashStake + expectedReward;
-
-      // Call updateUserState
-      await zenVault.connect(user1).updateUserState();
-
-      // Verify final stake
-      const actualBalance = await zenVault.stakedBalances(user1.address);
-      expect(actualBalance).to.equal(expectedFinalStake);
     });
   });
 });

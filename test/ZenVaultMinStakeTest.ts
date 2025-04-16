@@ -1,20 +1,18 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
+import { ZenVault, MockToken } from "../typechain-types";
 import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 import { setupTestEnvironment } from "./utils";
 
 describe("ZenVault MinStake Tests", function () {
   // Contracts
   let zenVault: ZenVault;
-  let mockStakingPrecompile: MockStakingPrecompile;
   let lpToken: MockToken;
 
   // Signers
   let owner: SignerWithAddress;
   let user1: SignerWithAddress;
   let user2: SignerWithAddress;
-  let rewardAccount: SignerWithAddress;
 
   // Constants
   const STAKING_ADDRESS = "0x0000000000000000000000000000000000000800";
@@ -31,12 +29,10 @@ describe("ZenVault MinStake Tests", function () {
       BONDING_DURATION
     );
     zenVault = testEnvironment.zenVault;
-    mockStakingPrecompile = testEnvironment.mockStakingPrecompile;
     lpToken = testEnvironment.lpToken;
     owner = testEnvironment.owner;
     user1 = testEnvironment.user1;
     user2 = testEnvironment.user2;
-    rewardAccount = testEnvironment.rewardAccount;
 
     // Approve ZenVault to spend LP tokens
     await lpToken.connect(user1).approve(await zenVault.getAddress(), ethers.parseEther("1000"));

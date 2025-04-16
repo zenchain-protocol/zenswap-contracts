@@ -344,6 +344,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *
      * @param user Address of the user to apply the slash to
      * @param slashOutstanding The normalized slash factor (scaled by PRECISION_FACTOR)
+     * @param userStakeBeforeSlash The user's initial staked balance, before any slash is applied
      *
      * @custom:modifies
      *   - stakedBalances[user] - May be reduced by slashed amount
@@ -352,62 +353,82 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *
      * @custom:emits UserSlashApplied(address user, uint256 totalSlashed, uint256 slashedFromStake, uint256 slashedFromUnlocking)
      */
-    function _applySlashToUser(address user, uint256 slashOutstanding) internal {
-        // Slash is proportional to current staked balance
-        uint256 userSlashableStake = this.getSlashableStake(user);
-        uint256 pendingSlash = userSlashableStake * slashOutstanding / PRECISION_FACTOR;
-        if (pendingSlash > 0) {
-            uint256 remainingSlash = pendingSlash;
+    function _applySlashToUser(address user, uint256 slashOutstanding, uint256 userStakeBeforeSlash) internal {
+        uint256 userSlashableStake = _getSlashableStake(user, userStakeBeforeSlash);
+        if (userSlashableStake > 0) {
+            uint256 pendingSlash = userSlashableStake * slashOutstanding / PRECISION_FACTOR;
+            if (pendingSlash > 0) {
+                uint256 remainingSlash = pendingSlash;
 
-            // Slash staked balance first
-            uint256 userStakeBeforeSlash = stakedBalances[user];
-            uint256 slashedFromStake = 0;
-            if (remainingSlash > 0 && userStakeBeforeSlash > 0) {
-                if (userStakeBeforeSlash >= remainingSlash) {
-                    slashedFromStake = remainingSlash;
-                    stakedBalances[user] = userStakeBeforeSlash - remainingSlash;
-                    remainingSlash = 0;
-                } else {
-                    slashedFromStake = userStakeBeforeSlash;
-                    remainingSlash -= userStakeBeforeSlash;
-                    stakedBalances[user] = 0;
-                }
-                // update total stake
-                totalStake -= slashedFromStake;
-            }
-
-            // Slash unlocking chunks if necessary
-            uint256 slashedFromUnlocking = 0;
-            if (remainingSlash > 0) {
-                UnlockChunk[] storage chunks = unlocking[user];
-                // slash newest first because they will become unlocked last
-                while (chunks.length > 0 && remainingSlash > 0) {
-                    UnlockChunk storage chunk = chunks[chunks.length - 1];
-                    uint256 chunkSlash = 0;
-                    if (chunk.value > remainingSlash) {
-                        chunkSlash = remainingSlash;
-                        chunk.value -= remainingSlash;
+                // Slash staked balance first
+                uint256 slashedFromStake = 0;
+                if (remainingSlash > 0 && userStakeBeforeSlash > 0) {
+                    if (userStakeBeforeSlash >= remainingSlash) {
+                        slashedFromStake = remainingSlash;
+                        stakedBalances[user] = userStakeBeforeSlash - remainingSlash;
                         remainingSlash = 0;
                     } else {
-                        chunkSlash = chunk.value;
-                        remainingSlash -= chunk.value;
-                        chunks.pop();
+                        slashedFromStake = userStakeBeforeSlash;
+                        remainingSlash -= userStakeBeforeSlash;
+                        stakedBalances[user] = 0;
                     }
-                    slashedFromUnlocking += chunkSlash;
+                    // update total stake
+                    totalStake -= slashedFromStake;
                 }
+
+                // Slash unlocking chunks if necessary
+                uint256 slashedFromUnlocking = 0;
+                if (remainingSlash > 0) {
+                    UnlockChunk[] storage chunks = unlocking[user];
+                    // slash newest first because they will become unlocked last
+                    while (chunks.length > 0 && remainingSlash > 0) {
+                        UnlockChunk storage chunk = chunks[chunks.length - 1];
+                        uint256 chunkSlash = 0;
+                        if (chunk.value > remainingSlash) {
+                            chunkSlash = remainingSlash;
+                            chunk.value -= remainingSlash;
+                            remainingSlash = 0;
+                        } else {
+                            chunkSlash = chunk.value;
+                            remainingSlash -= chunk.value;
+                            chunks.pop();
+                        }
+                        slashedFromUnlocking += chunkSlash;
+                    }
+                }
+
+                // update slashable stake
+                totalSlashableStake = totalSlashableStake - slashedFromStake - slashedFromUnlocking;
+
+                emit UserSlashApplied(user, pendingSlash, slashedFromStake, slashedFromUnlocking);
             }
-
-            // update slashable stake
-            totalSlashableStake = totalSlashableStake - slashedFromStake - slashedFromUnlocking;
-
-            emit UserSlashApplied(user, pendingSlash, slashedFromStake, slashedFromUnlocking);
         }
+    }
+
+    /**
+     * @notice Calculates the total slashable stake for a user
+     * @dev Combines the user's current staked balance with all values in their unlocking chunks
+     * to determine the total amount of tokens that can be subject to slashing
+     *
+     * @param user The address of the user to calculate slashable stake for
+     * @param userStake The user's current staked balance (passed as parameter to avoid duplicate storage reads)
+     * @return The total slashable stake amount (current stake + all unlocking chunks)
+     */
+    function _getSlashableStake(address user, uint256 userStake) internal view returns (uint256) {
+        uint256 slashableStake = userStake;
+        UnlockChunk[] memory chunks = unlocking[user];
+        uint256 len = chunks.length;
+        for (uint256 i = 0; i < len; i++) {
+            slashableStake += chunks[i].value;
+        }
+        return slashableStake;
     }
 
     /**
      * @dev Calculates and applies pending rewards for a user by auto-restaking them
      * @param user The address of the user receiving rewards
      * @param rewardOutstanding The accumulated reward rate that hasn't been processed for this user
+     * @param userStakeBeforeReward The user's initial staked balance, before any reward is applied
      *
      * @custom:modifies
      *   - stakedBalances[user] - Increases by the calculated reward amount
@@ -420,8 +441,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *   - Calculates rewards proportional to user's stake using the precision factor
      *   - Automatically compounds rewards by adding them to the user's stake
      */
-    function _applyRewardToUser(address user, uint256 rewardOutstanding) internal {
-        uint256 userStakeBeforeReward = stakedBalances[user];
+    function _applyRewardToUser(address user, uint256 rewardOutstanding, uint256 userStakeBeforeReward) internal {
         if (userStakeBeforeReward > 0) {
             uint256 pendingReward = userStakeBeforeReward * rewardOutstanding / PRECISION_FACTOR;
             if (pendingReward > 0) {
@@ -452,17 +472,18 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      *   - User's reward balance (via _applyRewardToUser if applicable)
      */
     function _updateUserState(address user) internal {
+        uint256 userStakeBeforeUpdate = stakedBalances[user];
         // Apply pending slash first, if any, to ensure user cannot be rewarded for stake that should have been slashed
         uint256 slashOutstanding = cumulativeSlashPerShare - userSlashPerShareApplied[user];
         if (slashOutstanding > 0) {
-            _applySlashToUser(user, slashOutstanding);
+            _applySlashToUser(user, slashOutstanding, userStakeBeforeUpdate);
             // Update user's applied slash level regardless of whether they had stake
             userSlashPerShareApplied[user] = cumulativeSlashPerShare;
         }
         // Apply pending rewards
         uint256 rewardOutstanding = cumulativeRewardPerShare - userRewardPerSharePaid[user];
         if (rewardOutstanding > 0) {
-            _applyRewardToUser(user, rewardOutstanding);
+            _applyRewardToUser(user, rewardOutstanding, userStakeBeforeUpdate);
             // Update user's paid reward level regardless of whether they had stake
             userRewardPerSharePaid[user] = cumulativeRewardPerShare;
         }
@@ -569,13 +590,7 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @return The total slashable stake for the user.
      */
     function getSlashableStake(address user) external view returns (uint256) {
-        uint256 slashableStake = stakedBalances[user];
-        UnlockChunk[] memory chunks = unlocking[user];
-        uint256 len = chunks.length;
-        for (uint256 i = 0; i < len; i++) {
-            slashableStake += chunks[i].value;
-        }
-        return slashableStake;
+        return _getSlashableStake(user, stakedBalances[user]);
     }
 
     /**
@@ -589,22 +604,20 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Calculates the pending rewards for a specific user
+     * @notice Calculates the pending rewards for a specific user, without applying it.
+     * This represents the slash amount that would be applied if updateUserState were called now.
      * @dev Determines rewards by:
-     *      1. Calculating eligible stake after any pending slashes
-     *      2. Multiplying eligible stake by outstanding rewards per share
-     *      3. Applying precision factor to maintain calculation accuracy
+     *      1. Multiplying user stake by outstanding rewards per share
+     *      2. Applying precision factor to maintain calculation accuracy
      * @param user The address of the user to check pending rewards for
      * @return The amount of pending rewards available to the user, or 0 if none
      */
     function getPendingRewards(address user) external view returns (uint256) {
-        uint256 pendingSlash = this.getPendingSlash(user);
-        uint256 currentUserStake = stakedBalances[user];
-        uint256 eligibleUserStake = currentUserStake > pendingSlash ? currentUserStake - pendingSlash : 0;
-        if (eligibleUserStake > 0) {
+        uint256 userStake = stakedBalances[user];
+        if (userStake > 0) {
             uint256 rewardOutstanding = cumulativeRewardPerShare - userRewardPerSharePaid[user];
             if (rewardOutstanding > 0) {
-                return eligibleUserStake * rewardOutstanding / PRECISION_FACTOR;
+                return userStake * rewardOutstanding / PRECISION_FACTOR;
             }
         }
         return 0;
@@ -612,8 +625,8 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
 
     /**
      * @notice Calculates the total pending slash amount for a user based on their slashable stake, without applying it.
-     * @dev This represents the slash amount that would be applied if _updateUserState were called now.
-     * Calculation is based on user's active stake + bonded unlocking chunks.
+     * This represents the slash amount that would be applied if updateUserState were called now.
+     * @dev Calculation is based on user's active stake + bonded unlocking chunks.
      * @param user The address of the user to query.
      * @return totalPendingSlash The total amount of tokens that would be slashed from the user's slashable assets.
      */

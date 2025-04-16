@@ -80,11 +80,15 @@ describe("ZenVault Complex Scenarios", function () {
     await zenVault.connect(user1).updateUserState();
     await zenVault.connect(user2).updateUserState();
 
-    // Calculate expected rewards (based on post-slash stake amounts)
+    // Calculate expected stake amounts after slash
     const postSlashTotalStake = totalStake - SLASH_AMOUNT;
+    const postSlashStakeAmount1 = stakeAmount1 - expectedSlash1;
+    const postSlashStakeAmount2 = stakeAmount2 - expectedSlash2;
+
+    // Calculate expected rewards
     const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / postSlashTotalStake;
-    const expectedReward1 = (rewardRatio * (stakeAmount1 - expectedSlash1)) / PRECISION_FACTOR;
-    const expectedReward2 = (rewardRatio * (stakeAmount2 - expectedSlash2)) / PRECISION_FACTOR;
+    const expectedReward1 = (rewardRatio * postSlashStakeAmount1) / PRECISION_FACTOR;
+    const expectedReward2 = (rewardRatio * postSlashStakeAmount2) / PRECISION_FACTOR;
 
     // Verify rewards were distributed correctly
     expect(await zenVault.stakedBalances(user1.address)).to.equal(

@@ -1,13 +1,12 @@
 import {expect} from "chai";
 import {ethers} from "hardhat";
-import {MockStakingPrecompile, MockToken, ZenVault} from "../typechain-types";
+import {MockToken, ZenVault} from "../typechain-types";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
 import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 
 describe("ZenVault MinStake Complex Tests", function () {
   // Contracts
   let zenVault: ZenVault;
-  let mockStakingPrecompile: MockStakingPrecompile;
   let lpToken: MockToken;
 
   // Signers
@@ -30,7 +29,6 @@ describe("ZenVault MinStake Complex Tests", function () {
       BONDING_DURATION
     );
     zenVault = testEnvironment.zenVault;
-    mockStakingPrecompile = testEnvironment.mockStakingPrecompile;
     lpToken = testEnvironment.lpToken;
     owner = testEnvironment.owner;
     user1 = testEnvironment.user1;

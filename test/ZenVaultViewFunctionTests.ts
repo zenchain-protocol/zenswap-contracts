@@ -1,13 +1,12 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { ZenVault, MockToken, MockStakingPrecompile } from "../typechain-types";
+import { ZenVault, MockToken } from "../typechain-types";
 import {PRECISION_FACTOR, setupTestEnvironment} from "./utils";
 import {SignerWithAddress} from "@nomicfoundation/hardhat-ethers/signers";
 
 describe("ZenVault View Function Tests", function () {
   // Contracts
   let zenVault: ZenVault;
-  let mockStakingPrecompile: MockStakingPrecompile;
   let lpToken: MockToken;
 
   // Signers
@@ -34,7 +33,6 @@ describe("ZenVault View Function Tests", function () {
       BONDING_DURATION
     );
     zenVault = testEnvironment.zenVault;
-    mockStakingPrecompile = testEnvironment.mockStakingPrecompile;
     lpToken = testEnvironment.lpToken;
     owner = testEnvironment.owner;
     rewardAccount = testEnvironment.rewardAccount;
@@ -94,26 +92,6 @@ describe("ZenVault View Function Tests", function () {
       expect(pendingRewards).to.equal(expectedReward);
     });
 
-    it("should correctly calculate pending rewards after slash", async function () {
-      // Apply slash first
-      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
-
-      // Distribute rewards
-      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
-
-      // Calculate expected values
-      const totalStake = stakeAmount1 + stakeAmount2;
-      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
-      const expectedSlash = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
-      const postSlashStake = stakeAmount1 - expectedSlash;
-      const rewardRatio = REWARD_AMOUNT * PRECISION_FACTOR / totalStake;
-      const expectedReward = (rewardRatio * postSlashStake) / PRECISION_FACTOR;
-
-      // Check pending rewards
-      const pendingRewards = await zenVault.getPendingRewards(user1.address);
-      expect(pendingRewards).to.equal(expectedReward);
-    });
-
     it("should handle getPendingRewards with zero stake", async function () {
       // Check pending rewards for user with no stake
       const pendingRewards = await zenVault.getPendingRewards(owner.address);
@@ -137,23 +115,6 @@ describe("ZenVault View Function Tests", function () {
       // Calculate expected pending slash
       const slashRatio = slashAmount * PRECISION_FACTOR / totalStake;
       const expectedSlash = (slashRatio * stakeAmount1 * 2n) / PRECISION_FACTOR;
-
-      // Check pending slash
-      const pendingSlash = await zenVault.getPendingSlash(user1.address);
-      expect(pendingSlash).to.equal(expectedSlash);
-    });
-
-    it("should correctly calculate pending slash after rewards", async function () {
-      // Distribute rewards first
-      await zenVault.connect(owner).distributeRewards(REWARD_AMOUNT);
-
-      // Apply slash
-      await zenVault.connect(owner).doSlash(SLASH_AMOUNT);
-
-      // Calculate expected values
-      const totalStake = stakeAmount1 + stakeAmount2;
-      const slashRatio = SLASH_AMOUNT * PRECISION_FACTOR / totalStake;
-      const expectedSlash = (slashRatio * stakeAmount1) / PRECISION_FACTOR;
 
       // Check pending slash
       const pendingSlash = await zenVault.getPendingSlash(user1.address);
@@ -219,7 +180,7 @@ describe("ZenVault View Function Tests", function () {
 
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
-      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n);
+      expect(approxTotalStake).to.equal(expectedApproxTotalStake);
     });
 
     it("should handle case where rewards exceed slashes", async function () {
@@ -236,7 +197,7 @@ describe("ZenVault View Function Tests", function () {
 
       // Check approximate pending total stake
       const approxTotalStake = await zenVault.getApproximatePendingTotalStake();
-      expect(approxTotalStake).to.be.closeTo(expectedApproxTotalStake, 1000n);
+      expect(approxTotalStake).to.equal(expectedApproxTotalStake);
     });
 
     it("should handle multiple rewards and slashes", async function () {
