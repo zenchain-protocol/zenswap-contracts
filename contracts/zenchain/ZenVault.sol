@@ -630,19 +630,14 @@ contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
      * @return totalPendingSlash The total amount of tokens that would be slashed from the user's slashable assets.
      */
     function getPendingSlash(address user) external view returns (uint256) {
-        // Calculate outstanding slash per share for the user
-        uint256 slashOutstanding = cumulativeSlashPerShare - userSlashPerShareApplied[user];
-        if (slashOutstanding == 0) {
-            return 0;
-        }
-
-        // Get the user's total slashable stake
         uint256 userSlashableStake = this.getSlashableStake(user);
-        if (userSlashableStake == 0) {
-            return 0;
+        if (userSlashableStake > 0) {
+            uint256 slashOutstanding = cumulativeSlashPerShare - userSlashPerShareApplied[user];
+            if (slashOutstanding > 0) {
+                return userSlashableStake * slashOutstanding / PRECISION_FACTOR;
+            }
         }
-
-        return userSlashableStake * slashOutstanding / PRECISION_FACTOR;
+        return 0;
     }
 
     // TODO: this should account for slashes being applied before rewards
