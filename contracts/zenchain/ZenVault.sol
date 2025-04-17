@@ -7,8 +7,6 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./Ownable.sol";
 import "../../precompile-interfaces/INativeStaking.sol";
 
-// TODO: Can I ensure that unlocking chunks outside of the bonding period are not slashable without allowing users to simply wait a couple of eras before applying their slash?
-
 contract ZenVault is IZenVault, ReentrancyGuard, Ownable {
     // The liquidity pool token that can be staked in this vault.
     IUniswapV2Pair public pool;
