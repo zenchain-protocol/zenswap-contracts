@@ -34,6 +34,9 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
+      forking: {
+        url: `https://zenchain-testnet.api.onfinality.io/rpc?apikey=${process.env.RPC_API_KEY}`,
+      },
       loggingEnabled: true,
       chainId: 31337,
     },
