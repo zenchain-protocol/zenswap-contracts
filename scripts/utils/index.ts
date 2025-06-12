@@ -9,9 +9,9 @@ export interface CommonParams {
   publicClient: PublicClient;
 }
 
-export const tokenList = ["ZTC", "ETH", "USDC"] as const;
+export const tokenList = ["ZTC", "ETH", "USDC", "USDT"] as const;
 // Convert union to tuple (manually, due to TS limitations)
-type TokenList = ["ZTC", "ETH", "USDC"];
+type TokenList = ["ZTC", "ETH", "USDC", "USDT"];
 type Tokens = TokenList[number];
 
 
@@ -131,16 +131,20 @@ export const mintMockToken = async ({
 }: MintTokenParms) => {
   console.log(`Minting ${formatUnits(BigInt(amount), decimals)} of token at address ${tokenAddress} with ${decimals} decimals`);
 
-  const MockToken = await hre.artifacts.readArtifact("MockToken");
-  const mintHash = await walletClient.writeContract({
-    address: tokenAddress,
-    abi: MockToken.abi,
-    functionName: "mint",
-    args: [walletClient.account.address, BigInt(amount)],
-    chain: undefined,
-    account: null
-  });
-  await publicClient.waitForTransactionReceipt({ hash: mintHash });
+  try {
+    const MockToken = await hre.artifacts.readArtifact("MockToken");
+    const mintHash = await walletClient.writeContract({
+      address: tokenAddress,
+      abi: MockToken.abi,
+      functionName: "mint",
+      args: [walletClient.account.address, BigInt(amount)],
+      chain: undefined,
+      account: null
+    });
+    await publicClient.waitForTransactionReceipt({ hash: mintHash });
+  } catch (err) {
+    console.error(`Error minting token at address ${tokenAddress}:`, err);
+  }
 }
 
 export interface ApproveTokenTransferParams {

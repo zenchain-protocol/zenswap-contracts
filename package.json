@@ -18,17 +18,39 @@
       "tokens": {
         "ZTC": "0x0000000000000000000000000000000000000804",
         "ETH": "0x95b1a313e08c577c678d6abfc229a6fa035e95db",
-        "USDC": "0xdc2b839dc176f152bc74c008de8dd6475bb0d25c"
+        "USDC": "0xdc2b839dc176f152bc74c008de8dd6475bb0d25c",
+        "USDT": "0x289128c4bd8d72cad19338453cb87fae900e759d"
       },
       "pairs": {
-        "ZTCETH": "0xE2a8ea9ECcAc4D88c84eA64118Eeb55191FDBe2A",
-        "ZTCUSDC": "0xA4d3D61d83D815E4Ede53708672870ebA8384B7E",
-        "ETHUSDC": "0xb8e8300a0f0F8ce41201022fdf985df73af1dd81"
+        "ZTCETH": "0xAE658338b1e6Fa4Eba420AFfd2b8CB420F0f41c4",
+        "ZTCUSDC": "0xb38D321c4dB0Bbe09E02c99b39146aEae250FC35",
+        "ZTCUSDT": "0xAb935A3d43c24F4e8a9Be06e538D4335E2a0AEEc",
+        "ETHUSDC": "0xF24BDE360b7F09e56FA0C42f8dae3E66E52Be029",
+        "ETHUSDT": "0x786fb5Ea0a27F061e374363460dE093B81B02685",
+        "USDCUSDT": "0xb0aBEe0a7c3f4184Bc9605b076fAcAc8869a4D9e"
       },
-      "factory": "0x4ae89898c71520bc2435e7056f80477e4d7ae7f8",
-      "router": "0x7f001472972e120ff00ff77d495e889bb0014414"
+      "factory": "0x77d7fa7cb837e7a1cd48918eaec6afa996586799",
+      "router": "0xe979396c42c6fb4be5857e1ff7560ab9be7d4730"
     },
-    "zenchainMainnet": {}
+    "zenchainMainnet": {},
+    "hardhat": {
+      "tokens": {
+        "ZTC": "0x0000000000000000000000000000000000000804",
+        "ETH": "0x0165878a594ca255338adfa4d48449f69242eb8f",
+        "USDC": "0xa513e6e4b8f2a923d98304ec87f64353c4d5c853",
+        "USDT": "0x2279b7a0a67db372996a5fab50d91eaa73d2ebe6"
+      },
+      "pairs": {
+        "ZTCETH": "0x778b8AAfC0927fbE9174c85093Ccf49a43D44045",
+        "ZTCUSDC": "0x1Da659ffe294CC40cfEd0ca17F74fD170d3E50d4",
+        "ZTCUSDT": "0xd30dC8163cFF67fd30a3b731b8D6F882A4E5d15D",
+        "ETHUSDC": "0x081289F223506F7884C8F7e8e32c1A5734A8904C",
+        "ETHUSDT": "0x81D378377E3d5393b4565AE1eDcF0E6037D88538",
+        "USDCUSDT": "0xE649b1934e04a13Abef1AC2D57D73aeE69f1d2a1"
+      },
+      "factory": "0x5fc8d32690cc91d4c39d9d3abcbd16989f875707",
+      "router": "0x8a791620dd6260079bf849dc5567adc3f2fdc318"
+    }
   },
   "keywords": [],
   "author": "",
