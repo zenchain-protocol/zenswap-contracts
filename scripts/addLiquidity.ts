@@ -65,7 +65,7 @@ async function main() {
     publicClient,
     routerAddress: deployedContracts.router as Address,
     tokenA: deployedContracts.tokens.ZTC as Address,
-    tokenB: deployedContracts.tokens.ETH as Address,
+    tokenB: deployedContracts.tokens.USDC as Address,
     amountADesired: parseUnits("1", 18 + 1).toString(),
     amountBDesired: parseUnits("400", 18 + 1).toString(),
     mintTokensA: false,
