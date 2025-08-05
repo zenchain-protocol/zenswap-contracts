@@ -120,6 +120,7 @@ export interface MintTokenParms {
   tokenAddress: Address;
   amount: string; // Amount to mint
   decimals?: number; // Optional, defaults to 18, used only for logging
+  forAddress?: Address; // Optional, if provided, mints to this address instead of walletClient.account.address
 }
 
 export const mintMockToken = async ({
@@ -128,6 +129,7 @@ export const mintMockToken = async ({
   tokenAddress,
   amount,
   decimals = 18,
+  forAddress = walletClient.account.address, // Default to walletClient's address
 }: MintTokenParms) => {
   console.log(`Minting ${formatUnits(BigInt(amount), decimals)} of token at address ${tokenAddress} with ${decimals} decimals`);
 
@@ -137,7 +139,7 @@ export const mintMockToken = async ({
       address: tokenAddress,
       abi: MockToken.abi,
       functionName: "mint",
-      args: [walletClient.account.address, BigInt(amount)],
+      args: [forAddress, BigInt(amount)],
       chain: undefined,
       account: null
     });
@@ -146,6 +148,7 @@ export const mintMockToken = async ({
     console.error(`Error minting token at address ${tokenAddress}:`, err);
   }
 }
+
 
 export interface ApproveTokenTransferParams {
   walletClient: WalletClient;
