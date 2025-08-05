@@ -9,9 +9,9 @@ export interface CommonParams {
   publicClient: PublicClient;
 }
 
-export const tokenList = ["ZTC", "ETH", "USDC", "USDT"] as const;
+export const tokenList = ["ZTC", "ETH", "USDC", "USDT", "BTC"] as const;
 // Convert union to tuple (manually, due to TS limitations)
-type TokenList = ["ZTC", "ETH", "USDC", "USDT"];
+type TokenList = ["ZTC", "ETH", "USDC", "USDT", "BTC"];
 type Tokens = TokenList[number];
 
 
