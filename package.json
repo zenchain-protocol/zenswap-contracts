@@ -10,6 +10,7 @@
     "deploy:localhost": "npx hardhat run scripts/deploy.ts --network localhost ---show-stack-traces",
     "deploy:testnet": "npx hardhat run scripts/deploy.ts --network zenchainTestnet ---show-stack-traces",
     "hardhat": "npx hardhat run --network zenchainTestnet --show-stack-traces",
+    "mint:testnet": "MINT_TO=0x123 MINT_AMOUNT=1000 npx hardhat run scripts/mintTokens.ts --network zenchainTestnet --show-stack-traces",
     "dev": "concurrently \"npm run node\" \"wait-on http://localhost:8545 && npm run deploy:localhost\"",
     "reset": "npm run clean && npm run dev"
   },
