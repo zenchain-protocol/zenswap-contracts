@@ -35,13 +35,13 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       forking: {
-        url: `https://zenchain-testnet.api.onfinality.io/rpc?apikey=${process.env.RPC_API_KEY}`,
+        url: `https://zenchain-testnet.api.onfinality.io/public`,
       },
       loggingEnabled: true,
       chainId: 31337,
     },
     zenchainTestnet: {
-      url: `https://zenchain-testnet.api.onfinality.io/rpc?apikey=${process.env.RPC_API_KEY}`,
+      url: `https://zenchain-testnet.api.onfinality.io/public`,
       chainId: 8408,
       accounts: [process.env.DEPLOYER_PRIVATE_KEY!],
       minGasPrice: 1000000000,

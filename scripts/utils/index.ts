@@ -1,8 +1,8 @@
 import fs from "fs";
-import path, { format } from "path";
+import path from "path";
 import hre from "hardhat";
-import { Address, BaseError, ContractFunctionRevertedError, formatUnits, parseUnits, PublicClient } from "viem";
-import { WalletClient } from "@nomicfoundation/hardhat-viem/types";
+import {Address, BaseError, ContractFunctionRevertedError, formatUnits, parseUnits, PublicClient} from "viem";
+import {WalletClient} from "@nomicfoundation/hardhat-viem/types";
 
 export interface CommonParams {
   walletClient: WalletClient;
@@ -114,6 +114,40 @@ export const readDeploymentRecord = async (networkName: string): Promise<Deploye
   return deployments;
 }
 
+// ---- ERC20 helpers ----
+export const getTokenDecimals = async ({ publicClient, tokenAddress }: { publicClient: PublicClient; tokenAddress: Address; }): Promise<number> => {
+  const IERC20 = await hre.artifacts.readArtifact("IERC20Metadata");
+  const decimals = await publicClient.readContract({
+    address: tokenAddress,
+    abi: IERC20.abi,
+    functionName: "decimals",
+    args: [],
+  });
+  return Number(decimals);
+}
+
+export const getTokenBalance = async ({ publicClient, tokenAddress, owner }: { publicClient: PublicClient; tokenAddress: Address; owner: Address; }): Promise<bigint> => {
+  const IERC20 = await hre.artifacts.readArtifact("IERC20Metadata");
+  const balance = await publicClient.readContract({
+    address: tokenAddress,
+    abi: IERC20.abi,
+    functionName: "balanceOf",
+    args: [owner],
+  });
+  return Array.isArray(balance) ? (balance[0] as bigint) : (balance as bigint);
+}
+
+export const getTokenAllowance = async ({ publicClient, tokenAddress, owner, spender }: { publicClient: PublicClient; tokenAddress: Address; owner: Address; spender: Address; }): Promise<bigint> => {
+  const IERC20 = await hre.artifacts.readArtifact("IERC20Metadata");
+  const allowance = await publicClient.readContract({
+    address: tokenAddress,
+    abi: IERC20.abi,
+    functionName: "allowance",
+    args: [owner, spender],
+  });
+  return Array.isArray(allowance) ? (allowance[0] as bigint) : (allowance as bigint);
+}
+
 export interface MintTokenParms {
   walletClient: WalletClient;
   publicClient: PublicClient;
@@ -146,6 +180,7 @@ export const mintMockToken = async ({
     await publicClient.waitForTransactionReceipt({ hash: mintHash });
   } catch (err) {
     console.error(`Error minting token at address ${tokenAddress}:`, err);
+    throw err;
   }
 }
 
@@ -196,8 +231,8 @@ export interface AddLiquidityParams {
   routerAddress: Address;
   tokenA: Address;
   tokenB: Address;
-  amountADesired: string;
-  amountBDesired: string;
+  amountA: string; // human-readable amount (e.g., "1" for 1 token)
+  amountB: string; // human-readable amount (e.g., "2750" for 2750 tokens)
   mintTokensA?: boolean; // Optional, defaults to false
   mintTokensB?: boolean; // Optional, defaults to false
 }
@@ -208,11 +243,21 @@ export const addLiquidityToPair = async ({
   routerAddress,
   tokenA,
   tokenB,
-  amountADesired,
-  amountBDesired,
+  amountA,
+  amountB,
   mintTokensA = false, // Optional, defaults to false
   mintTokensB = false, // Optional, defaults to false
 }: AddLiquidityParams) => {
+
+  // Determine token decimals
+  const [decimalsA, decimalsB] = await Promise.all([
+    getTokenDecimals({ publicClient, tokenAddress: tokenA }),
+    getTokenDecimals({ publicClient, tokenAddress: tokenB }),
+  ]);
+
+  // Parse desired amounts into token units
+  const amountAParsed = parseUnits(amountA, decimalsA).toString();
+  const amountBParsed = parseUnits(amountB, decimalsB).toString();
 
   // Mint tokens if they are mock tokens
   if (mintTokensA) {
@@ -220,7 +265,8 @@ export const addLiquidityToPair = async ({
       walletClient,
       publicClient,
       tokenAddress: tokenA,
-      amount: amountADesired,
+      amount: amountAParsed,
+      decimals: decimalsA,
     });
   }
   if (mintTokensB) {
@@ -228,7 +274,8 @@ export const addLiquidityToPair = async ({
       walletClient,
       publicClient,
       tokenAddress: tokenB,
-      amount: amountBDesired,
+      amount: amountBParsed,
+      decimals: decimalsB,
     });
   }
 
@@ -238,19 +285,39 @@ export const addLiquidityToPair = async ({
     publicClient,
     tokenAddress: tokenA,
     spender: routerAddress,
-    amount: amountADesired,
+    amount: amountAParsed,
+    decimals: decimalsA,
   });
   await approveTokenTransfer({
     walletClient,
     publicClient,
     tokenAddress: tokenB,
     spender: routerAddress,
-    amount: amountBDesired,
+    amount: amountBParsed,
+    decimals: decimalsB,
   });
 
+  // Check balances & allowances
+  const [balanceA, balanceB, allowanceA, allowanceB] = await Promise.all([
+    getTokenBalance({ publicClient, tokenAddress: tokenA, owner: walletClient.account.address }),
+    getTokenBalance({ publicClient, tokenAddress: tokenB, owner: walletClient.account.address }),
+    getTokenAllowance({ publicClient, tokenAddress: tokenA, owner: walletClient.account.address, spender: routerAddress }),
+    getTokenAllowance({ publicClient, tokenAddress: tokenB, owner: walletClient.account.address, spender: routerAddress }),
+  ]);
+
+  const amountAWei = BigInt(amountAParsed);
+  const amountBWei = BigInt(amountBParsed);
+
   console.log(`Adding liquidity to pair: ${tokenA} and ${tokenB}`);
-  console.log(`Amount A Desired: ${formatUnits(BigInt(amountADesired), 18).toString()}`);
-  console.log(`Amount B Desired: ${formatUnits(BigInt(amountBDesired), 18).toString()}`);
+  console.log(`Amount A Desired: ${formatUnits(amountAWei, decimalsA).toString()} (decimals: ${decimalsA})`);
+  console.log(`Amount B Desired: ${formatUnits(amountBWei, decimalsB).toString()} (decimals: ${decimalsB})`);
+  console.log(`Balance A: ${formatUnits(balanceA, decimalsA)} | Allowance A: ${formatUnits(allowanceA, decimalsA)}`);
+  console.log(`Balance B: ${formatUnits(balanceB, decimalsB)} | Allowance B: ${formatUnits(allowanceB, decimalsB)}`);
+
+  if (balanceA < amountAWei) throw new Error(`Insufficient balance for tokenA ${tokenA}. Need ${amountAParsed}, have ${balanceA.toString()}`);
+  if (balanceB < amountBWei) throw new Error(`Insufficient balance for tokenB ${tokenB}. Need ${amountBParsed}, have ${balanceB.toString()}`);
+  if (allowanceA < amountAWei) throw new Error(`Insufficient allowance for tokenA ${tokenA}. Need ${amountAParsed}, have ${allowanceA.toString()}`);
+  if (allowanceB < amountBWei) throw new Error(`Insufficient allowance for tokenB ${tokenB}. Need ${amountBParsed}, have ${allowanceB.toString()}`);
 
   const IUniswapV2Router02 = await hre.artifacts.readArtifact("IUniswapV2Router02");
 
@@ -264,8 +331,8 @@ export const addLiquidityToPair = async ({
       args: [
         tokenA,
         tokenB,
-        BigInt(amountADesired),
-        BigInt(amountBDesired),
+        amountAWei,
+        amountBWei,
         0n, // Min amount A
         0n, // Min amount B
         walletClient.account.address, // Recipient
@@ -273,6 +340,8 @@ export const addLiquidityToPair = async ({
       ],
       account: walletClient.account.address,
     });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: addLiquidityHash });
+    console.log(`Liquidity added successfully. Tx: ${receipt.transactionHash}`);
   } catch (err) {
     if (err instanceof BaseError) {
       const revertError = err.walk(err => err instanceof ContractFunctionRevertedError)
@@ -286,11 +355,6 @@ export const addLiquidityToPair = async ({
     console.error("Error adding liquidity:", err);
     throw err;
   }
-
-
-  //await publicClient.waitForTransactionReceipt({ hash: addLiquidityHash });
-  console.log("Liquidity added successfully.");
-
 }
 
 export interface CreatePairParams {
@@ -321,13 +385,12 @@ export const createPair = async ({
   const receipt = await publicClient.waitForTransactionReceipt({ hash: createPairHash });
   console.log(`Pair created successfully. Transaction Hash: ${receipt.transactionHash}`);
 
-  const pairAddress = await publicClient.readContract({
+  return await publicClient.readContract({
     address: factoryAddress,
     abi: IUniswapV2Factory.abi,
     functionName: "getPair",
     args: [tokenA, tokenB],
   });
-  return pairAddress;
 }
 
 export interface DeployMockTokenParams {
